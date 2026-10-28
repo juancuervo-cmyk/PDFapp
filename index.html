@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Cuervo.PDF</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Montserrat:ital,wght@0,400;0,700;1,400;1,700&family=Comic+Neue:ital,wght@0,400;0,700;1,400;1,700&family=Arimo:ital,wght@0,400;0,700;1,400;1,700&display=swap">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Barra superior: desplegables + accesos directos -->
+        <div class="toolbar" id="top-bar">
+            <!-- Marca / título -->
+            <div class="brand" aria-label="Cuervo.PDF">
+                <span class="brand-logo"><i data-icon="file-pdf"></i></span>
+                <span class="brand-title">Cuervo<span class="brand-dot">.PDF</span></span>
+            </div>
+
+            <!-- Desplegable Archivo -->
+            <div class="menu" id="menu-file">
+                <button class="menu-trigger" aria-haspopup="true" aria-expanded="false">Archivo <i data-icon="caret-down"></i></button>
+                <div class="menu-panel" role="menu" hidden>
+                    <button id="btn-open" role="menuitem" title="Abrir PDF o imagen(es) (Ctrl+O)"><i data-icon="folder-open"></i> Abrir</button>
+                    <button id="btn-save" role="menuitem" title="Guardar cambios en el mismo archivo (Ctrl+S)" disabled><i data-icon="floppy-disk"></i> Guardar</button>
+                    <button id="btn-save-as" role="menuitem" title="Guardar con otro nombre o ubicación (Ctrl+Mayús+S)" disabled><i data-icon="floppy-disk-back"></i> Guardar como</button>
+                    <button id="btn-print" role="menuitem" title="Imprimir documento (Ctrl+P)" disabled><i data-icon="printer"></i> Imprimir</button>
+                    <div class="menu-sub">
+                        <button id="btn-export" class="menu-sub-trigger" role="menuitem" aria-haspopup="true" disabled><i data-icon="export"></i> Exportar <i data-icon="caret-right"></i></button>
+                        <div class="menu-panel menu-subpanel" role="menu" hidden>
+                            <button id="btn-export-pdf" role="menuitem" title="Exportar el documento como PDF" disabled><i data-icon="file-pdf"></i> Como PDF</button>
+                            <button id="btn-export-img" role="menuitem" title="Exportar página actual o todo el PDF a PNG/JPG" disabled><i data-icon="file-image"></i> Como Imagen</button>
+                        </div>
+                    </div>
+                    <button id="btn-insert-img" role="menuitem" title="Insertar imagen como nueva página" disabled><i data-icon="image"></i> Importar imagen</button>
+                    <span class="menu-separator"></span>
+                    <button id="btn-merge" role="menuitem" title="Fusionar otro PDF en la posición actual" disabled><i data-icon="plus-circle"></i> Unir</button>
+                    <button id="btn-split" role="menuitem" title="Extraer rango de páginas a un nuevo PDF" disabled><i data-icon="scissors"></i> Extraer páginas</button>
+                </div>
+            </div>
+
+            <!-- Desplegable Vistas -->
+            <div class="menu" id="menu-view">
+                <button class="menu-trigger" aria-haspopup="true" aria-expanded="false">Vistas <i data-icon="caret-down"></i></button>
+                <div class="menu-panel" role="menu" hidden>
+                    <button id="btn-thumbnail-view" role="menuitemcheckbox" aria-checked="true" title="Mostrar u ocultar la lista de miniaturas"><i data-icon="sidebar-simple"></i> Miniatura <span class="menu-check"><i data-icon="check"></i></span></button>
+                    <button id="btn-theme" role="menuitem" title="Cambiar entre Modo Oscuro y Claro"><i data-icon="moon"></i> Modo Oscuro</button>
+                </div>
+            </div>
+
+            <button id="btn-grid-view" title="Organizador masivo de páginas en cuadrícula" disabled><i data-icon="squares-four"></i> Cuadrícula</button>
+            <button id="btn-qr-validate" title="Validar factura: dibujá un recuadro sobre el QR de AFIP/ARCA y se abre la página de validación" disabled><i data-icon="qr-code"></i> Validar QR</button>
+
+            <!-- Formato de texto: visible sólo con la herramienta Texto (lo arma app.js) -->
+            <div id="text-format-bar" class="text-format" hidden></div>
+
+            <!-- Buscador (Ctrl+F) -->
+            <div id="search-box" class="search-box" role="search">
+                <i data-icon="magnifying-glass"></i>
+                <input type="search" id="search-input" placeholder="Buscar en el PDF (Ctrl+F)" autocomplete="off" spellcheck="false" disabled>
+                <span id="search-count" class="search-count" aria-live="polite"></span>
+                <button type="button" id="search-prev" class="search-nav" title="Coincidencia anterior (Mayús+Enter)" disabled><i data-icon="caret-up"></i></button>
+                <button type="button" id="search-next" class="search-nav" title="Coincidencia siguiente (Enter)" disabled><i data-icon="caret-down"></i></button>
+                <button type="button" id="search-clear" class="search-nav" title="Limpiar búsqueda (Esc)" hidden><i data-icon="x"></i></button>
+            </div>
+        </div>
+
+        <!-- Área central: miniaturas + página -->
+        <div id="main">
+            <div id="thumbnail-list"></div>
+            <div id="thumb-resizer" title="Arrastra para cambiar el ancho de las miniaturas (doble clic: tamaño original)"></div>
+            <div id="scroll-area">
+                <div id="page-container">
+                    <div id="page-placeholder">
+                        <span class="drop-icon"><i data-icon="file-arrow-up"></i></span>
+                        <span class="drop-title">Arrastra un PDF/Imagen aquí</span>
+                        <span class="drop-hint">o presiona <kbd>Ctrl</kbd> + <kbd>O</kbd></span>
+                    </div>
+                    <div id="page-wrapper" hidden>
+                        <canvas id="page-canvas"></canvas>
+                        <canvas id="overlay-canvas" data-mode="navigate"></canvas>
+                    </div>
+                </div>
+            </div>
+            <!-- Menú vertical de herramientas de edición (arrastrable) -->
+            <div id="edit-tools" class="floating-bar">
+                <div class="side-grip" title="Arrastrar"><i data-icon="dots-six-vertical"></i></div>
+                <label class="tool" title="Navegar"><input type="radio" name="mode" value="navigate" checked><i data-icon="cursor"></i></label>
+                <span class="side-separator"></span>
+                <!-- Grupos: un solo ícono que despliega sus herramientas (muestra la última elegida) -->
+                <div class="tool-group" data-default="text">
+                    <button type="button" class="tool group-toggle" title="Texto" aria-haspopup="true" aria-expanded="false"><i data-icon="text-t"></i></button>
+                    <div class="group-flyout floating-bar" hidden>
+                        <label class="tool" title="Insertar texto"><input type="radio" name="mode" value="text"><i data-icon="text-t"></i></label>
+                        <label class="tool" title="Nota (post-it): clic en la página para colocarla; elige el color en la paleta"><input type="radio" name="mode" value="note"><i data-icon="note"></i></label>
+                        <label class="tool" title="Copiar texto"><input type="radio" name="mode" value="copy_text"><i data-icon="copy-text"></i></label>
+                        <label class="tool" title="Resaltar"><input type="radio" name="mode" value="highlight"><i data-icon="highlighter"></i></label>
+                        <label class="tool" title="Subrayar: selecciona un área para subrayar el texto (también en páginas escaneadas, con OCR)"><input type="radio" name="mode" value="underline"><i data-icon="text-underline"></i></label>
+                        <label class="tool" title="Tachar: selecciona un área para tachar el texto (también en páginas escaneadas, con OCR)"><input type="radio" name="mode" value="strike"><i data-icon="text-strikethrough"></i></label>
+                    </div>
+                </div>
+                <div class="tool-group" data-default="draw">
+                    <button type="button" class="tool group-toggle" title="Dibujo" aria-haspopup="true" aria-expanded="false"><i data-icon="scribble"></i></button>
+                    <div class="group-flyout floating-bar" hidden>
+                        <label class="tool" title="Dibujar"><input type="radio" name="mode" value="draw"><i data-icon="scribble"></i></label>
+                        <label class="tool" title="Rectángulo"><input type="radio" name="mode" value="rect"><i data-icon="rectangle"></i></label>
+                        <label class="tool" title="Flecha"><input type="radio" name="mode" value="arrow"><i data-icon="arrow-up-right"></i></label>
+                        <label class="tool" title="Línea"><input type="radio" name="mode" value="line"><i data-icon="line-segment"></i></label>
+                    </div>
+                </div>
+                <div class="tool-group" data-default="select">
+                    <button type="button" class="tool group-toggle" title="Imagen" aria-haspopup="true" aria-expanded="false"><i data-icon="selection"></i></button>
+                    <div class="group-flyout floating-bar" hidden>
+                        <label class="tool" title="Selección: selecciona un área para copiarla como imagen y pegarla con Ctrl+V"><input type="radio" name="mode" value="select"><i data-icon="selection"></i></label>
+                        <label class="tool" title="Recortar"><input type="radio" name="mode" value="crop"><i data-icon="crop"></i></label>
+                        <label class="tool" title="Borrar área: selecciona un área para taparla con blanco (se puede quitar con la goma)"><input type="radio" name="mode" value="erase_area"><i data-icon="selection-slash"></i></label>
+                    </div>
+                </div>
+                <label class="tool" title="Borrar"><input type="radio" name="mode" value="erase"><i data-icon="eraser"></i></label>
+                <span class="side-separator"></span>
+                <button type="button" id="btn-undo" class="tool tool-btn" title="Deshacer la última acción (Ctrl+Z)" disabled><i data-icon="arrow-counter-clockwise"></i></button>
+                <button type="button" id="btn-redo" class="tool tool-btn" title="Rehacer la acción (Ctrl+Y)" disabled><i data-icon="arrow-clockwise"></i></button>
+
+                <!-- Opciones de la herramienta (se despliega hacia la derecha) -->
+                <div id="tool-options" class="floating-bar" hidden>
+                    <span class="tool-opt tool-opt-color">
+                        <span class="label">Color: </span>
+                        <button id="btn-color" class="color-swatch" title="Seleccionar Color"></button>
+                        <input type="color" id="color-input" value="#000000" hidden>
+                    </span>
+                    <span class="tool-opt tool-opt-palette" hidden>
+                        <span class="label">Color de la nota: </span>
+                        <span id="note-palette" class="note-palette"></span>
+                    </span>
+                    <span class="tool-opt tool-opt-width">
+                        <span class="label">Grosor: </span>
+                        <input type="number" id="spin-width" class="spin" min="1" max="40" value="14">
+                    </span>
+                </div>
+            </div>
+
+            <!-- Menú vertical flotante (arrastrable) -->
+            <div id="side-tools" class="floating-bar">
+                <div class="side-grip" title="Arrastrar"><i data-icon="dots-six-vertical"></i></div>
+                <button id="btn-zoom-in" class="btn-icon" title="Acercar Zoom (Ctrl++)" disabled><i data-icon="magnifying-glass-plus"></i></button>
+                <button id="btn-zoom-out" class="btn-icon" title="Alejar Zoom (Ctrl+-)" disabled><i data-icon="magnifying-glass-minus"></i></button>
+                <span class="side-separator"></span>
+                <button id="btn-rotate-left" class="btn-icon" title="Rotar página 90° a la izquierda" disabled><i data-icon="arrow-counter-clockwise"></i></button>
+                <button id="btn-rotate-right" class="btn-icon" title="Rotar página 90° a la derecha" disabled><i data-icon="arrow-clockwise"></i></button>
+                <span class="side-separator"></span>
+                <button id="btn-blank-page" class="btn-icon" title="Añadir una hoja en blanco después de la página actual" disabled><i data-icon="file-plus"></i></button>
+                <button id="btn-delete-page" class="btn-icon" title="Eliminar la página actual (Supr)" disabled><i data-icon="trash"></i></button>
+                <span class="side-separator"></span>
+                <button id="btn-signature" class="btn-icon" title="Cargar una nueva firma o marca de agua" disabled><i data-icon="signature"></i></button>
+                <!-- Firmas cargadas: se arrastran a la hoja para estamparlas -->
+                <div id="signature-list"></div>
+            </div>
+
+            <!-- Paginación flotante (abajo, centrada) -->
+            <div id="page-nav" class="floating-bar">
+                <button id="btn-prev" class="btn-small" title="Página anterior" disabled><i data-icon="caret-left"></i></button>
+                <span id="lbl-page-info" class="label"> 0 / 0 </span>
+                <input type="number" id="spin-page" class="spin" min="1" max="99" value="1" disabled>
+                <button id="btn-next" class="btn-small" title="Página siguiente" disabled><i data-icon="caret-right"></i></button>
+            </div>
+        </div>
+
+        <div id="status-bar">Listo. Sin documento cargado.</div>
+    </div>
+
+    <!-- Selectores de archivos (QFileDialog) -->
+    <input type="file" id="file-open" multiple hidden
+           accept=".pdf,.png,.jpg,.jpeg,.bmp,.webp,.tiff,.tif,application/pdf,image/png,image/jpeg,image/bmp,image/webp,image/tiff">
+    <input type="file" id="file-merge" hidden accept=".pdf,application/pdf">
+    <input type="file" id="file-images" multiple hidden
+           accept=".png,.jpg,.jpeg,.bmp,.webp,.tiff,.tif,image/png,image/jpeg,image/bmp,image/webp,image/tiff">
+
+    <!-- Contenido que se envía a la impresora -->
+    <div id="print-area"></div>
+
+    <!-- Librerías -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/Draggable.min.js"></script>
+
+    <!-- Aplicación -->
+    <script src="js/icons.js"></script>
+    <script src="js/pdf-ops.js"></script>
+    <script src="js/dialogs.js"></script>
+    <script src="js/grid.js"></script>
+    <script src="js/app.js"></script>
+    <script src="js/toolbar.js"></script>
+    <script src="js/ui-fx.js"></script>
+</body>
+</html>
