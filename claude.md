@@ -12,6 +12,8 @@ las animaciones deberás realizarlas con la librería GSAP
 
 repositorio de github: https://github.com/juancuervo-cmyk/PDFapp (rama main)
 
+dominio en vercel: https://pdf-app-rose.vercel.app/
+
 control de versiones:
 - nunca hagas push ni pull sin mi autorización.
 - al iniciar un nuevo chat siempre revisa que todos los archivos concuerden con el repo (git fetch y comparar con origin/main). si hay diferencias o hace falta hacer pull, AVISAME y yo te digo si sí o si no. haz el análisis primero: si los archivos son los mismos y no hay nada nuevo para traer, no me preguntes por el pull, simplemente sigue.
