@@ -10,6 +10,13 @@ para iconos utilizaremos siempre los cargados en C:\Users\agost\OneDrive\Escrito
 
 las animaciones deberás realizarlas con la librería GSAP
 
+repositorio de github: https://github.com/juancuervo-cmyk/PDFapp (rama main)
+
+control de versiones:
+- nunca hagas push ni pull sin mi autorización.
+- al iniciar un nuevo chat siempre revisa que todos los archivos concuerden con el repo (git fetch y comparar con origin/main). si hay diferencias o hace falta hacer pull, AVISAME y yo te digo si sí o si no. haz el análisis primero: si los archivos son los mismos y no hay nada nuevo para traer, no me preguntes por el pull, simplemente sigue.
+- también revisa si la colaboradora agostina realizó cambios en main. siempre preserva los cambios tanto míos como de ella, para que todo lo que se suba a main no pise ni pierda nada de nadie.
+
 nota para mi papá: 
 - Sonnet 5.5 para cambios chiquitos y preguntas
 - TOP Opus 5.5 para funciones y cambios grandes o difíciles
