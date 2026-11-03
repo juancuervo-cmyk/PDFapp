@@ -97,8 +97,8 @@ body.dark {
     --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.4), 0 24px 56px -12px rgba(0, 0, 0, 0.75);
     --shadow-page: 0 1px 3px rgba(0, 0, 0, 0.5), 0 22px 50px -14px rgba(0, 0, 0, 0.85);
 
-    --scroll-thumb: rgba(255, 255, 255, 0.14);
-    --scroll-thumb-hover: rgba(255, 255, 255, 0.26);
+    --scroll-thumb: rgba(210, 210, 210, 0.5);
+    --scroll-thumb-hover: rgba(225, 225, 225, 0.75);
     color-scheme: dark;
 }
 
@@ -1753,8 +1753,8 @@ textarea.input-field { resize: vertical; }
 /* ---------- Organizador en cuadrícula ---------- */
 
 dialog.grid-dialog[open] {
-    width: 1000px;
-    height: 700px;
+    width: 1200px;
+    height: 820px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -1878,6 +1878,49 @@ body.resizing-grid * { cursor: nwse-resize !important; user-select: none; }
 }
 
 .grid-item.selected .grid-label { color: var(--accent-text); }
+
+/* Página ampliada al 100 % de la ventana (doble clic en la cuadrícula) */
+.grid-preview {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    background-color: var(--canvas-bg);
+    background-image: radial-gradient(var(--dot) 1px, transparent 1.3px);
+    background-size: 22px 22px;
+}
+
+/* Al agrandar con Ctrl++ la página puede superar la ventana: se recorre desplazando */
+.grid-preview-scroll {
+    position: absolute;
+    inset: 0;
+    overflow: auto;
+}
+
+.grid-preview-stage {
+    box-sizing: border-box;
+    display: flex;
+    width: max-content;
+    min-width: 100%;
+    min-height: 100%;
+    padding: 24px;
+}
+
+.grid-preview canvas {
+    flex: none;
+    margin: auto;
+    border-radius: 3px;
+    box-shadow: 0 0 0 1px var(--border), 0 12px 32px -8px rgba(0, 0, 0, 0.35);
+}
+
+.grid-preview-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background-color: var(--elevated);
+    border-color: var(--border);
+    box-shadow: var(--shadow-lg);
+    cursor: pointer;
+}
 
 .grid-buttons {
     display: flex;

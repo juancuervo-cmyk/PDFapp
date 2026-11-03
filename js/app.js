@@ -9,6 +9,7 @@ const PDFJS_ASSETS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/';
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
 const PAKO_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js';
 const UTIF_URL = 'https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js';
+const ZXING_URL = 'https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.4/dist/iife/reader/index.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}pdf.worker.min.js`;
 
@@ -949,26 +950,69 @@ function toggleQrTool() {
     document.querySelectorAll('input[name="mode"]').forEach(r => { r.checked = false; });
     setMode('qr');
     showStatus('Validar QR: dibujá un recuadro sobre el código QR de la factura.', 6000, 'qr-code');
+    // Precarga del lector: al soltar el recuadro la página de AFIP se abre enseguida
+    // (los navegadores bloquean ventanas que se abren varios segundos después del clic)
+    loadScript(ZXING_URL)
+        .then(() => window.ZXingWASM && window.ZXingWASM.getZXingModule())
+        .catch(e => console.warn(e));
+}
+
+/**
+ * Busca un QR en la región marcada. Usa zxing-wasm, que lee bien los QR de facturas reales
+ * (guardados en JPEG, escaneados, torcidos o con poco contraste), donde jsQR suele fallar;
+ * jsQR queda de respaldo si zxing no se puede cargar. Se prueba a varias resoluciones porque
+ * cada lector acierta mejor a una escala distinta según el tamaño del QR.
+ */
+async function readQrInRegion(pageIndex, rect) {
+    let zxing = null;
+    try {
+        await loadScript(ZXING_URL);
+        zxing = window.ZXingWASM || null;
+    } catch (e) {
+        console.warn(e);
+    }
+    if (!zxing && typeof jsQR !== 'function') return { available: false, text: null };
+
+    for (const dpi of [300, 600, 150, 450]) {
+        const pixels = (rect.x1 - rect.x0) * (rect.y1 - rect.y0) * (dpi / 72) ** 2;
+        if (pixels > 20e6) continue; // recuadro muy grande: a esta resolución sería demasiado pesado
+        const canvas = await renderPageRegion(pageIndex, rect, dpi);
+        if (!canvas) break;
+        const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+        if (zxing) {
+            try {
+                const results = await zxing.readBarcodes(data, { formats: ['QRCode'], tryHarder: true, maxNumberOfSymbols: 1 });
+                const hit = results.find(r => r.isValid && r.text);
+                if (hit) return { available: true, text: hit.text };
+            } catch (e) {
+                console.warn(e); // p. ej. sin conexión no baja el .wasm: se sigue sólo con jsQR
+                zxing = null;
+                if (typeof jsQR !== 'function') return { available: false, text: null };
+            }
+        }
+        if (typeof jsQR === 'function') {
+            const code = jsQR(data.data, data.width, data.height, { inversionAttempts: 'attemptBoth' });
+            if (code && code.data) return { available: true, text: code.data };
+        }
+    }
+    return { available: true, text: null };
 }
 
 /** Lee el QR del área marcada y abre la página de AFIP/ARCA para validar la factura. */
 async function validateQrInRect(screenRect) {
-    if (typeof jsQR !== 'function') {
-        showStatus('No se pudo cargar el lector de QR (jsQR). Revisá la conexión a internet y recargá la página.', 8000, 'warning');
+    const { available, text } = await readQrInRegion(state.currentPage, screenRect);
+    if (!available) {
+        showStatus('No se pudo cargar el lector de QR. Revisá la conexión a internet y recargá la página.', 8000, 'warning');
         return;
     }
-    const canvas = await renderPageRegion(state.currentPage, screenRect, 300);
-    if (!canvas) return;
-    const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
-    const code = typeof jsQR === 'function' ? jsQR(data.data, data.width, data.height, { inversionAttempts: 'attemptBoth' }) : null;
-    if (!code || !code.data) {
+    if (!text) {
         showStatus('No se detectó ningún código QR en esa área. Probá encuadrándolo mejor.', 6000, 'warning');
         return;
     }
     let url;
-    try { url = new URL(code.data.trim()); } catch (e) { url = null; }
+    try { url = new URL(text.trim()); } catch (e) { url = null; }
     if (!url || !/(^|\.)(afip|arca)\.gob\.ar$/i.test(url.hostname) || url.protocol !== 'https:') {
-        showStatus(`El QR no es de AFIP/ARCA: "${code.data.slice(0, 80)}"`, 8000, 'warning');
+        showStatus(`El QR no es de AFIP/ARCA: "${text.slice(0, 80)}"`, 8000, 'warning');
         return;
     }
     window.open(url.href, '_blank', 'noopener');
@@ -2720,6 +2764,7 @@ function initUi() {
     initSearch();
     initNotes();
     ui.btnOpen.addEventListener('click', openFileOrImage);
+    $('btn-new-tab').addEventListener('click', openNewReaderTab);
     ui.btnSave.addEventListener('click', () => runTask(savePdf));
     ui.btnSaveAs.addEventListener('click', () => runTask(savePdfAs));
     ui.btnPrint.addEventListener('click', () => runTask(printPdf));
@@ -3288,6 +3333,11 @@ function isTextField(el) {
     return el.tagName === 'INPUT' && ['text', 'number', 'search'].includes(el.type);
 }
 
+/** Menú Archivo > Nueva pestaña / Ctrl+D: abre otra instancia vacía del lector. */
+function openNewReaderTab() {
+    window.open(location.origin + location.pathname, '_blank');
+}
+
 function setupShortcuts() {
     document.addEventListener('keydown', e => {
         if (isAnyDialogOpen()) return;
@@ -3328,6 +3378,7 @@ function setupShortcuts() {
                 if (r && !r.checked) { r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); }
             }
             else if (lower === 'o') { e.preventDefault(); openFileOrImage(); }
+            else if (lower === 'd' && !e.shiftKey && !e.altKey) { e.preventDefault(); openNewReaderTab(); }
             else if (lower === 'f') { e.preventDefault(); focusSearch(); }
             else if (lower === 's') { e.preventDefault(); runTask(e.shiftKey ? savePdfAs : savePdf); }
             else if (lower === 'p') { e.preventDefault(); runTask(printPdf); }

@@ -20,6 +20,30 @@ class GridViewDialog {
         this.renderToken = 0;
         this.dragFrom = null;      // fila que se está arrastrando
         this.dropIndex = null;     // posición de inserción durante el arrastre
+        this.previewEl = null;     // página ampliada al 100 % (doble clic)
+        this.previewToken = 0;
+        this.preview = null;       // estado del zoom de la página ampliada (Ctrl++ / Ctrl+-)
+        this.previewPointer = null;
+        // Teclado con la página ampliada. Se escucha en toda la ventana (fase de captura) para que
+        // Ctrl++ / Ctrl+- agranden sólo la página aunque el foco haya quedado fuera del diálogo;
+        // si no, el navegador haría zoom de toda la ventana. No se edita la cuadrícula: sólo Esc y zoom.
+        this.onPreviewKeyDown = e => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ctrl = e.ctrlKey || e.metaKey;
+            if (e.key === 'Escape') this.closePagePreview();
+            else if (ctrl && (e.key === '+' || e.key === '=')) this.zoomPreview(1.25);
+            else if (ctrl && e.key === '-') this.zoomPreview(0.8);
+        };
+        // Ctrl+Rueda (y el pellizco del touchpad, que llega igual) también agranda sólo la página
+        this.onPreviewWheel = e => {
+            if (!e.ctrlKey) return; // sin Ctrl la rueda desplaza la página ampliada
+            e.preventDefault();
+            e.stopPropagation();
+            this.previewPointer = { x: e.clientX, y: e.clientY };
+            const delta = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY; // Firefox informa en líneas
+            if (delta) this.zoomPreview(Math.pow(1.25, -delta / 100)); // una muesca = un Ctrl++
+        };
     }
 
     open() {
@@ -75,7 +99,11 @@ class GridViewDialog {
             });
         });
 
-        dlg.addEventListener('cancel', e => { e.preventDefault(); this.finish(null); });
+        dlg.addEventListener('cancel', e => {
+            e.preventDefault();
+            if (this.previewEl) this.closePagePreview(); // Esc con la página ampliada: vuelve a la cuadrícula
+            else this.finish(null);
+        });
 
         // Redimensionar la ventana desde la esquina. El diálogo está centrado, así que
         // crece el doble de lo que se mueve el mouse para que la esquina lo siga.
@@ -235,6 +263,8 @@ class GridViewDialog {
 
     finish(result) {
         this.renderToken++;
+        window.removeEventListener('keydown', this.onPreviewKeyDown, true);
+        window.removeEventListener('wheel', this.onPreviewWheel, { capture: true });
         if (this.dlg.open) this.dlg.close();
         this.dlg.remove();
         this.resolve(result);
@@ -294,6 +324,7 @@ class GridViewDialog {
             label.textContent = String(row + 1);
             cell.append(iconBox, label);
             cell.addEventListener('mousedown', e => this.onCellMouseDown(e, row));
+            cell.addEventListener('dblclick', () => this.openPagePreview(pageIndex));
             cell.draggable = true;
             cell.addEventListener('dragstart', e => {
                 this.dragFrom = row;
@@ -310,6 +341,126 @@ class GridViewDialog {
             this.gridEl.appendChild(cell);
         });
         this.scrollCurrentIntoView();
+    }
+
+    /** Doble clic: muestra la página ocupando toda la ventana. Doble clic, Esc o la X vuelven a la cuadrícula. */
+    async openPagePreview(pageIndex) {
+        if (this.previewEl) return;
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const overlay = document.createElement('div');
+        overlay.className = 'grid-preview';
+        overlay.innerHTML = `
+            <div class="grid-preview-scroll"><div class="grid-preview-stage"></div></div>
+            <button type="button" class="btn-icon grid-preview-close" title="Volver a la cuadrícula (Esc)">${icon('x')}</button>`;
+        overlay.addEventListener('dblclick', () => this.closePagePreview());
+        overlay.querySelector('.grid-preview-close').addEventListener('click', () => this.closePagePreview());
+        const scroller = overlay.querySelector('.grid-preview-scroll');
+        const stage = overlay.querySelector('.grid-preview-stage');
+        // Última posición del mouse: el zoom con Ctrl++ / Ctrl+- se centra en ese punto de la página
+        this.previewPointer = null;
+        scroller.addEventListener('pointermove', e => { this.previewPointer = { x: e.clientX, y: e.clientY }; });
+        scroller.addEventListener('pointerleave', () => { this.previewPointer = null; });
+        this.dlg.appendChild(overlay);
+        this.previewEl = overlay;
+        window.addEventListener('keydown', this.onPreviewKeyDown, true);
+        window.addEventListener('wheel', this.onPreviewWheel, { capture: true, passive: false });
+        gsap.fromTo(overlay, { autoAlpha: 0 }, { autoAlpha: 1, duration: reduceMotion ? 0 : 0.2, ease: 'power2.out' });
+
+        // Tamaño inicial: la página entera ocupando el área disponible
+        const token = ++this.previewToken;
+        const page = await this.pdfDoc.getPage(pageIndex + 1);
+        if (token !== this.previewToken) return;
+        const base = page.getViewport({ scale: 1 });
+        const style = getComputedStyle(stage);
+        const availW = scroller.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+        const availH = scroller.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+        const fit = Math.min(availW / base.width, availH / base.height);
+        const canvas = document.createElement('canvas');
+        this.preview = { page, canvas, scroller, fit, baseW: base.width * fit, baseH: base.height * fit, zoom: 1, targetZoom: 1 };
+        this.applyPreviewZoom();
+        await this.renderPreview();
+        if (token !== this.previewToken) return;
+        stage.appendChild(canvas);
+        gsap.fromTo(canvas, { autoAlpha: 0, scale: 0.94 },
+            { autoAlpha: 1, scale: 1, duration: reduceMotion ? 0 : 0.3, ease: 'power3.out', clearProps: 'transform' });
+    }
+
+    /** Renderiza la página ampliada a la resolución del zoom actual para que se vea nítida. */
+    async renderPreview() {
+        const p = this.preview;
+        if (!p) return;
+        const zoom = p.zoom;
+        const base = p.page.getViewport({ scale: 1 });
+        // Tope de píxeles del lienzo para no agotar la memoria con zoom muy alto
+        const maxScale = Math.sqrt(32e6 / (base.width * base.height));
+        const viewport = p.page.getViewport({ scale: Math.min(p.fit * zoom * (window.devicePixelRatio || 1), maxScale) });
+        const off = document.createElement('canvas');
+        off.width = Math.floor(viewport.width);
+        off.height = Math.floor(viewport.height);
+        await p.page.render({ canvasContext: off.getContext('2d'), viewport }).promise;
+        if (this.preview !== p || p.zoom !== zoom) return; // ya hay otro zoom en curso: lo renderiza ese
+        p.canvas.width = off.width;
+        p.canvas.height = off.height;
+        p.canvas.getContext('2d').drawImage(off, 0, 0);
+    }
+
+    /** Ctrl++ / Ctrl+-: agranda o achica la página ampliada manteniendo fijo el punto bajo el mouse. */
+    zoomPreview(factor) {
+        const p = this.preview;
+        if (!p || !p.canvas.isConnected) return;
+        const target = Math.min(8, Math.max(0.25, p.targetZoom * factor));
+        if (target === p.targetZoom) return;
+        p.targetZoom = target;
+
+        // Punto de anclaje: el lugar de la página bajo el mouse (o el centro de la vista si no está encima)
+        const rect = p.scroller.getBoundingClientRect();
+        const ptr = this.previewPointer;
+        const mx = ptr ? ptr.x - rect.left : p.scroller.clientWidth / 2;
+        const my = ptr ? ptr.y - rect.top : p.scroller.clientHeight / 2;
+        const clamp01 = v => Math.min(1, Math.max(0, v));
+        const anchor = {
+            fx: clamp01((p.scroller.scrollLeft + mx - p.canvas.offsetLeft) / (p.baseW * p.zoom)),
+            fy: clamp01((p.scroller.scrollTop + my - p.canvas.offsetTop) / (p.baseH * p.zoom)),
+            mx, my
+        };
+
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        gsap.killTweensOf(p);
+        gsap.to(p, {
+            zoom: target,
+            duration: reduceMotion ? 0 : 0.2,
+            ease: 'power2.out',
+            onUpdate: () => this.applyPreviewZoom(anchor),
+            onComplete: () => { this.applyPreviewZoom(anchor); this.renderPreview(); }
+        });
+    }
+
+    applyPreviewZoom(anchor = null) {
+        const p = this.preview;
+        if (!p) return;
+        const w = p.baseW * p.zoom;
+        const h = p.baseH * p.zoom;
+        p.canvas.style.width = `${w}px`;
+        p.canvas.style.height = `${h}px`;
+        if (anchor) {
+            p.scroller.scrollLeft = p.canvas.offsetLeft + anchor.fx * w - anchor.mx;
+            p.scroller.scrollTop = p.canvas.offsetTop + anchor.fy * h - anchor.my;
+        }
+    }
+
+    closePagePreview() {
+        const overlay = this.previewEl;
+        if (!overlay) return;
+        window.removeEventListener('keydown', this.onPreviewKeyDown, true);
+        window.removeEventListener('wheel', this.onPreviewWheel, { capture: true });
+        if (this.preview) gsap.killTweensOf(this.preview);
+        this.preview = null;
+        this.previewPointer = null;
+        this.previewEl = null;
+        this.previewToken++;
+        const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        gsap.to(overlay, { autoAlpha: 0, duration: reduceMotion ? 0 : 0.15, ease: 'power1.in', onComplete: () => overlay.remove() });
+        this.gridEl.focus();
     }
 
     setCurrentRow(row) {
