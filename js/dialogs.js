@@ -254,3 +254,54 @@ function clampInt(value, min, max, fallback) {
     if (Number.isNaN(n)) return fallback;
     return Math.min(max, Math.max(min, n));
 }
+
+/** Ventana informativa con los atajos de teclado (Ctrl+F1). */
+function showShortcutsDialog() {
+    const sections = [
+        ['Generales', [
+            ['Ctrl+O', 'Abrir PDF o imagen'],
+            ['Ctrl+D', 'Nueva pestaña del lector'],
+            ['Ctrl+S', 'Guardar'],
+            ['Ctrl+Mayús+S', 'Guardar como'],
+            ['Ctrl+P', 'Imprimir'],
+            ['Ctrl+F', 'Buscar'],
+            ['Ctrl+Z', 'Deshacer'],
+            ['Ctrl+Mayús+Z o Ctrl+Y', 'Rehacer'],
+            ['Ctrl++ o Ctrl+=', 'Acercar'],
+            ['Ctrl+-', 'Alejar'],
+            ['Ctrl+1', 'Modo copiar texto'],
+            ['← y →', 'Página anterior y siguiente'],
+            ['Supr', 'Eliminar la página actual'],
+            ['Esc', 'Cierra el aviso de pegado; en modo Nota vuelve a Navegar; con una imagen en edición la cancela'],
+            ['Ctrl+F1', 'Muestra esta ventana de atajos']
+        ]],
+        ['Con una imagen en edición', [
+            ['Enter', 'Aplica la imagen'],
+            ['Supr o Retroceso', 'Elimina la imagen'],
+            ['Esc o Ctrl+Z', 'Cancela la edición']
+        ]],
+        ['En la vista de cuadrícula', [
+            ['Ctrl+A', 'Selecciona todas las páginas'],
+            ['Ctrl+Z', 'Deshace'],
+            ['Supr', 'Elimina las páginas seleccionadas'],
+            ['Ctrl+clic', 'Suma o quita páginas de la selección'],
+            ['Mayús+clic', 'Selecciona un rango de páginas'],
+            ['Ctrl+Rueda', 'Zoom de las miniaturas'],
+            ['Ctrl++ / Ctrl+-', 'Zoom en la página ampliada']
+        ]]
+    ];
+    const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    return new Promise(resolve => {
+        const { dlg, body, footer } = createDialog('Atajos de teclado', { className: 'shortcuts-dialog' });
+        body.innerHTML = sections.map(([title, rows]) => `
+            <h3>${title}</h3>
+            <table>${rows.map(([k, d]) => `<tr><td><kbd>${esc(k)}</kbd></td><td>${esc(d)}</td></tr>`).join('')}</table>`).join('') +
+            `<p class="shortcuts-note">En Mac, Cmd hace lo mismo que Ctrl. Ctrl+Z, Ctrl+Y, ← →, Supr y Retroceso no funcionan mientras escribes en un campo de texto. Con un diálogo abierto, los atajos generales no responden.</p>`;
+        let done = false;
+        const finish = () => { if (done) return; done = true; closeDialog(dlg); resolve(); };
+        const ok = addDialogButton(footer, 'Cerrar', finish, { isDefault: true });
+        dlg.addEventListener('cancel', e => { e.preventDefault(); finish(); });
+        dlg.showModal();
+        ok.focus();
+    });
+}

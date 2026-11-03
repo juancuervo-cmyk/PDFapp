@@ -3371,6 +3371,8 @@ function setupShortcuts() {
             }
         }
 
+        if (ctrl && key === 'F1') { e.preventDefault(); showShortcutsDialog(); return; }
+
         if (ctrl) {
             if (key === '1') {
                 e.preventDefault();
