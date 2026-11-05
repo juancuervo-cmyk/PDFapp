@@ -87,7 +87,6 @@ const ui = {
     statusBar: $('status-bar'),
     textFormatBar: $('text-format-bar'),
     fileOpen: $('file-open'),
-    fileMerge: $('file-merge'),
     fileImages: $('file-images'),
     printArea: $('print-area')
 };
@@ -144,7 +143,7 @@ function setModified(modified = true) {
 }
 
 function enableControls(enable) {
-    [ui.btnGridView, ui.btnQrValidate, ui.btnMerge, ui.btnSplit, ui.btnSignature,ui.btnPrint, ui.btnExport, ui.btnExportImg, ui.btnExportPdf,
+    [ui.btnGridView, ui.btnQrValidate, ui.btnSplit, ui.btnSignature,ui.btnPrint, ui.btnExport, ui.btnExportImg, ui.btnExportPdf,
      ui.btnInsertImg, ui.btnPrev, ui.btnNext, ui.btnZoomIn, ui.btnZoomOut, ui.btnDeletePage, ui.btnBlankPage,
      ui.btnRotateLeft, ui.btnRotateRight, ui.btnSave, ui.btnSaveAs, ui.spinPage, ui.searchInput].forEach(el => { el.disabled = !enable; });
 }
@@ -461,10 +460,30 @@ function insertImageAsPage() {
     ui.fileImages.click();
 }
 
-function mergePdf() {
-    if (!hasDocument()) return;
-    ui.fileMerge.value = '';
-    ui.fileMerge.click();
+/**
+ * Unir: abre la ventana para cargar y ordenar PDF. Funciona sin documento abierto;
+ * si hay uno, aparece ya cargado como primer archivo.
+ */
+async function mergePdf() {
+    // Mientras la ventana está abierta no hay ningún proceso en curso: sin cursor de espera
+    document.body.classList.remove('busy');
+    const current = hasDocument() ? { name: state.currentFilePath || 'Documento actual.pdf', bytes: state.pdfBytes } : null;
+    const result = await new MergeDialog(current).open();
+    document.body.classList.add('busy'); // runTask lo quita al terminar
+    if (!result) return;
+
+    if (result.includesCurrent && hasDocument()) {
+        // El documento abierto forma parte de la unión: se reemplaza su contenido (se puede deshacer)
+        await editDocument(() => loadLibDoc(result.bytes), { newPage: 0 });
+        setModified(true);
+        return;
+    }
+    if (hasDocument() && state.isModified) {
+        const reply = await msgQuestionYesNo('Cambios sin guardar',
+            'El documento actual tiene cambios sin guardar que se perderán al abrir el PDF unido. ¿Deseas continuar?');
+        if (reply !== 'yes') return;
+    }
+    await loadNewDocument([new File([result.bytes], result.name, { type: 'application/pdf' })]);
 }
 
 /* ---------- Visualización ---------- */
@@ -2774,7 +2793,7 @@ function initUi() {
     ui.btnRedo.addEventListener('click', () => runTask(redoAction));
     ui.btnGridView.addEventListener('click', () => runTask(openGridView));
     ui.btnQrValidate.addEventListener('click', toggleQrTool);
-    ui.btnMerge.addEventListener('click', mergePdf);
+    ui.btnMerge.addEventListener('click', () => runTask(mergePdf));
     ui.btnSplit.addEventListener('click', () => runTask(extractPages));
     ui.btnSignature.addEventListener('click', () => runTask(configureStamp));
     ui.btnInsertImg.addEventListener('click', insertImageAsPage);
@@ -2802,10 +2821,6 @@ function initUi() {
     ui.fileImages.addEventListener('change', () => {
         const files = Array.from(ui.fileImages.files);
         if (files.length) runTask(() => loadOrMergeDroppedFiles(files));
-    });
-    ui.fileMerge.addEventListener('change', () => {
-        const files = Array.from(ui.fileMerge.files);
-        if (files.length) runTask(() => loadOrMergeDroppedFiles([files[0]]));
     });
 
     document.querySelectorAll('input[name="mode"]').forEach(radio => {
