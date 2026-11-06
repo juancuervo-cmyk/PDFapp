@@ -103,7 +103,8 @@ class MergeDialog {
                 data: item.bytes.slice(),
                 cMapUrl: `${PDFJS_ASSETS}cmaps/`,
                 cMapPacked: true,
-                standardFontDataUrl: `${PDFJS_ASSETS}standard_fonts/`
+                standardFontDataUrl: `${PDFJS_ASSETS}standard_fonts/`,
+                worker: pdfjsWorker()
             }).promise;
             item.pages = pdf.numPages;
             const page = await pdf.getPage(1);

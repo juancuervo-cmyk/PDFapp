@@ -3,7 +3,11 @@
    siempre se usa la última versión publicada) y las librerías de CDN, que tienen
    versión fija, se sirven desde la copia guardada. */
 
-const CACHE = 'cuervo-pdf-v3';
+const CACHE = 'cuervo-pdf-v4';
+
+// Con wifi lento, si la red no responde en este tiempo se usa la copia guardada (y la versión
+// nueva se sigue bajando en segundo plano para la próxima vez que se abra la app).
+const NETWORK_TIMEOUT_MS = 2500;
 
 const APP_SHELL = [
     '/',
@@ -56,15 +60,24 @@ self.addEventListener('activate', event => {
 
 async function networkFirst(request) {
     const cache = await caches.open(CACHE);
-    try {
-        const response = await fetch(request);
+    const network = fetch(request).then(response => {
         if (response.ok) cache.put(request, response.clone());
         return response;
+    });
+    const cached = await cache.match(request, { ignoreSearch: true })
+        || (request.mode === 'navigate' && await cache.match('/'));
+    if (!cached) return network; // primera vez: no hay copia, se espera a la red
+    let timer;
+    const timeout = new Promise(resolve => { timer = setTimeout(() => resolve(null), NETWORK_TIMEOUT_MS); });
+    try {
+        const response = await Promise.race([network, timeout]);
+        if (response) return response;
+        network.catch(() => {}); // sigue actualizando la copia en segundo plano
+        return cached;
     } catch (e) {
-        const cached = await cache.match(request, { ignoreSearch: true })
-            || (request.mode === 'navigate' && await cache.match('/'));
-        if (cached) return cached;
-        throw e;
+        return cached; // sin conexión
+    } finally {
+        clearTimeout(timer);
     }
 }
 

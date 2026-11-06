@@ -11,7 +11,30 @@ const PAKO_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js'
 const UTIF_URL = 'https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.js';
 const ZXING_URL = 'https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.4/dist/iife/reader/index.js';
 
+const JSZIP_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+const JSQR_URL = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+
 pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}pdf.worker.min.js`;
+
+/* Un único worker de pdf.js para toda la app: antes cada documento abierto (y cada recarga
+   tras una edición) levantaba un worker nuevo y volvía a cargar ~1 MB de código. */
+let sharedPdfWorker = null;
+function pdfjsWorker() {
+    if (!sharedPdfWorker || sharedPdfWorker.destroyed) sharedPdfWorker = new pdfjsLib.PDFWorker();
+    return sharedPdfWorker;
+}
+// Se prepara apenas carga la página, así al abrir el primer PDF el worker ya está listo.
+window.addEventListener('load', () => {
+    const warm = () => { try { pdfjsWorker(); } catch (_) { /* se crea al abrir el PDF */ } };
+    if ('requestIdleCallback' in window) requestIdleCallback(warm, { timeout: 2000 }); else setTimeout(warm, 300);
+});
+
+/* Las miniaturas se dibujan como mucho a 1.5x la resolución de pantalla: siguen nítidas
+   pero en pantallas de alta densidad ocupan casi la mitad de memoria. */
+const THUMB_MAX_DPR = 1.5;
+function thumbPixelRatio() {
+    return Math.min(window.devicePixelRatio || 1, THUMB_MAX_DPR);
+}
 
 const BASE_TITLE = 'Editor y Convertidor de PDF Professional';
 const VALID_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg', '.bmp', '.webp', '.tiff', '.tif'];
@@ -372,7 +395,7 @@ async function loadNewDocument(files, fileHandle = null) {
     enableControls(true);
     updateUndoRedoButtons();
     setModified(false);
-    ui.thumbList.innerHTML = ''; // documento nuevo: no se reutilizan las miniaturas del anterior
+    clearThumbList(); // documento nuevo: no se reutilizan las miniaturas del anterior
     await reloadViewer();
 }
 
@@ -509,8 +532,7 @@ async function splitDocument() {
 
 let renderToken = 0;
 let currentRenderTask = null;
-let thumbToken = 0;
-const pendingThumbPages = new Set(); // hojas modificadas cuya miniatura aún no se redibujó
+let mainRenderPromise = Promise.resolve(); // dibujo de la hoja actual en curso (miniaturas y demás hojas esperan)
 const wordsCache = new Map();
 
 /** Cambia el documento de pdf.js por el de los bytes actuales sin volver a dibujar la página (ediciones de notas). */
@@ -520,7 +542,8 @@ async function swapViewerDocQuietly() {
         data: state.pdfBytes.slice(),
         cMapUrl: `${PDFJS_ASSETS}cmaps/`,
         cMapPacked: true,
-        standardFontDataUrl: `${PDFJS_ASSETS}standard_fonts/`
+        standardFontDataUrl: `${PDFJS_ASSETS}standard_fonts/`,
+        worker: pdfjsWorker()
     }).promise;
     wordsCache.clear();
     if (old) old.destroy();
@@ -536,7 +559,8 @@ async function reloadViewer({ thumbPages = null } = {}) {
         data: state.pdfBytes.slice(),
         cMapUrl: `${PDFJS_ASSETS}cmaps/`,
         cMapPacked: true,
-        standardFontDataUrl: `${PDFJS_ASSETS}standard_fonts/`
+        standardFontDataUrl: `${PDFJS_ASSETS}standard_fonts/`,
+        worker: pdfjsWorker()
     }).promise;
     wordsCache.clear();
     search.matches = []; // las coincidencias anteriores ya no valen; se vuelven a calcular abajo
@@ -558,7 +582,13 @@ function pageSizeLabel(widthMm, heightMm) {
     return 'Personalizado';
 }
 
-async function renderCurrentPage({ updateThumbnails = false } = {}) {
+function renderCurrentPage(options) {
+    const p = renderCurrentPageNow(options);
+    mainRenderPromise = p.catch(() => {});
+    return p;
+}
+
+async function renderCurrentPageNow({ updateThumbnails = false } = {}) {
     if (!state.pdfJsDoc) return;
     commitTextEditor();
     commitImageEditor();
@@ -621,7 +651,7 @@ async function renderCurrentPage({ updateThumbnails = false } = {}) {
     );
 
     if (updateThumbnails) generateThumbnails();
-    syncPageSlots(doc, token);
+    syncPageSlots(doc);
 }
 
 /* ---------- Vista de todas las páginas ---------- */
@@ -631,18 +661,66 @@ const slotDocIds = new WeakMap();
 let slotsToken = 0;
 let lastScrolledPage = -1;
 
+/* Las hojas que no son la actual se dibujan sólo cuando están cerca de la parte visible
+   (antes se dibujaban todas al abrir, lo que en documentos largos tardaba y consumía mucha
+   memoria). Las que quedan muy lejos se liberan y se vuelven a dibujar al acercarse. */
+const slotVisible = new Set();
+let slotObserver = null;
+let slotFarObserver = null;
+let slotPumpRunning = false;
+
+function slotKeyFor(doc) {
+    if (!slotDocIds.has(doc)) slotDocIds.set(doc, ++slotDocId);
+    return `${slotDocIds.get(doc)}|${state.zoomFactor}|${window.devicePixelRatio || 1}`;
+}
+
+function observeSlot(slot) {
+    if (!slotObserver) {
+        slotObserver = new IntersectionObserver(entries => {
+            for (const e of entries) {
+                if (e.isIntersecting) slotVisible.add(e.target); else slotVisible.delete(e.target);
+            }
+            pumpSlots();
+        }, { root: ui.scrollArea, rootMargin: '200% 0px' });
+        slotFarObserver = new IntersectionObserver(entries => {
+            for (const e of entries) {
+                const slot = e.target;
+                if (e.isIntersecting || slot.classList.contains('current') || !slot.firstChild) continue;
+                if (slot.contains(ui.pageWrapper)) continue;
+                slot.replaceChildren(); // conserva su tamaño (style) para no mover el scroll
+                delete slot.dataset.key;
+            }
+        }, { root: ui.scrollArea, rootMargin: '500% 0px' });
+    }
+    slotObserver.observe(slot);
+    slotFarObserver.observe(slot);
+}
+
+function unobserveSlot(slot) {
+    slotVisible.delete(slot);
+    if (slotObserver) { slotObserver.unobserve(slot); slotFarObserver.unobserve(slot); }
+}
+
+/** Ajusta el tamaño de una hoja aún no dibujada (o dibujada con otro zoom) al de su página. */
+function setSlotSize(slot, cssW, cssH) {
+    slot.style.width = `${cssW}px`;
+    slot.style.height = `${cssH}px`;
+    const old = slot.firstChild;
+    if (old && old.tagName === 'CANVAS') { old.style.width = '100%'; old.style.height = '100%'; }
+}
+
 /**
  * Muestra todas las páginas apiladas. La página actual es la editable (contiene el
  * #page-wrapper); las demás son imágenes estáticas y al hacer clic pasan a ser la actual.
  */
-async function syncPageSlots(doc, renderTok) {
+async function syncPageSlots(doc) {
     const container = ui.placeholder.parentElement;
     const token = ++slotsToken;
-    if (!slotDocIds.has(doc)) slotDocIds.set(doc, ++slotDocId);
-    const key = `${slotDocIds.get(doc)}|${state.zoomFactor}|${window.devicePixelRatio || 1}`;
+    const key = slotKeyFor(doc);
 
     let slots = Array.from(container.querySelectorAll(':scope > .page-slot'));
-    while (slots.length > doc.numPages) slots.pop().remove();
+    while (slots.length > doc.numPages) { const s = slots.pop(); unobserveSlot(s); s.remove(); }
+    const created = [];
     while (slots.length < doc.numPages) {
         const slot = document.createElement('div');
         slot.className = 'page-slot';
@@ -656,6 +734,7 @@ async function syncPageSlots(doc, renderTok) {
         });
         container.appendChild(slot);
         slots.push(slot);
+        created.push(slot);
     }
 
     const cur = slots[state.currentPage];
@@ -666,45 +745,128 @@ async function syncPageSlots(doc, renderTok) {
             prev.style.height = ui.pageCanvas.style.height;
             prev.replaceChildren();
             delete prev.dataset.key;
+            delete prev.dataset.sized;
         }
         cur.replaceChildren(ui.pageWrapper);
     }
-    if (cur) { cur.classList.add('current'); delete cur.dataset.key; cur.style.width = cur.style.height = ''; }
+    if (cur) { cur.classList.add('current'); delete cur.dataset.key; delete cur.dataset.sized; cur.style.width = cur.style.height = ''; }
+    slots.forEach((s, i) => { if (i !== state.currentPage) s.classList.remove('current'); });
+
+    // Tamaño provisorio (el de la hoja actual) para las hojas nuevas, así el scroll ya es correcto
+    for (const slot of created) {
+        if (slot !== cur) { slot.style.width = ui.pageCanvas.style.width; slot.style.height = ui.pageCanvas.style.height; }
+    }
+
     if (lastScrolledPage !== state.currentPage) {
         lastScrolledPage = state.currentPage;
         cur?.scrollIntoView({ block: 'nearest' });
     }
+    created.forEach(observeSlot);
+    pumpSlots();
 
-    const dpr = window.devicePixelRatio || 1;
+    // Tamaño exacto de cada hoja (sin dibujarla): es rápido y deja el scroll en su lugar justo
     for (let i = 0; i < slots.length; i++) {
         const slot = slots[i];
-        if (i === state.currentPage) continue;
-        slot.classList.remove('current');
-        if (slot.dataset.key === key) continue;
+        if (i === state.currentPage || slot.dataset.key === key || slot.dataset.sized === key) continue;
         try {
             const page = await doc.getPage(i + 1);
-            if (token !== slotsToken || renderTok !== renderToken) return;
-            const viewport = page.getViewport({ scale: state.zoomFactor * dpr });
-            const canvas = document.createElement('canvas');
-            canvas.width = Math.ceil(viewport.width);
-            canvas.height = Math.ceil(viewport.height);
-            canvas.style.width = `${viewport.width / dpr}px`;
-            canvas.style.height = `${viewport.height / dpr}px`;
-            slot.style.width = canvas.style.width;
-            slot.style.height = canvas.style.height;
-            await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-            if (token !== slotsToken || renderTok !== renderToken) return;
-            slot.replaceChildren(canvas);
-            slot.dataset.key = key;
+            if (token !== slotsToken) return;
+            const vp = page.getViewport({ scale: state.zoomFactor });
+            if (slot.dataset.key !== key && i !== state.currentPage) setSlotSize(slot, vp.width, vp.height);
+            slot.dataset.sized = key;
         } catch (e) {
             return; // el documento pudo recargarse mientras tanto
         }
     }
 }
 
+/** Dibuja, de a una, las hojas cercanas a la vista (primero las más próximas a la actual). */
+async function pumpSlots() {
+    if (slotPumpRunning) return;
+    slotPumpRunning = true;
+    try {
+        await null;
+        for (;;) {
+            await mainRenderPromise; // la hoja actual tiene prioridad
+            const doc = state.pdfJsDoc;
+            if (!doc) break;
+            const key = slotKeyFor(doc);
+            const slots = Array.from(ui.placeholder.parentElement.querySelectorAll(':scope > .page-slot'));
+            let best = -1;
+            for (let i = 0; i < slots.length && i < doc.numPages; i++) {
+                const s = slots[i];
+                if (i === state.currentPage || !slotVisible.has(s) || s.dataset.key === key || s.dataset.failed === key) continue;
+                if (best < 0 || Math.abs(i - state.currentPage) < Math.abs(best - state.currentPage)) best = i;
+            }
+            if (best < 0) break;
+            const slot = slots[best];
+            try {
+                const page = await doc.getPage(best + 1);
+                const dpr = window.devicePixelRatio || 1;
+                const viewport = page.getViewport({ scale: state.zoomFactor * dpr });
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.ceil(viewport.width);
+                canvas.height = Math.ceil(viewport.height);
+                canvas.style.width = `${viewport.width / dpr}px`;
+                canvas.style.height = `${viewport.height / dpr}px`;
+                await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                // Se descarta si mientras tanto cambió el documento, el zoom o la hoja actual
+                if (!state.pdfJsDoc || slotKeyFor(state.pdfJsDoc) !== key || !slot.isConnected || slot.classList.contains('current')) continue;
+                slot.style.width = canvas.style.width;
+                slot.style.height = canvas.style.height;
+                slot.replaceChildren(canvas);
+                slot.dataset.key = key;
+                slot.dataset.sized = key;
+            } catch (e) {
+                if (doc === state.pdfJsDoc) slot.dataset.failed = key; // no reintentar en bucle
+            }
+        }
+    } finally {
+        slotPumpRunning = false;
+    }
+}
+
 /* ---------- Miniaturas (DraggableThumbnailList) ---------- */
 
 let thumbDragFrom = null;
+
+/* Igual que las hojas, las miniaturas se dibujan sólo al acercarse a la parte visible del
+   panel, se guardan como imagen WebP comprimida (pesan mucho menos que un canvas) y a una
+   resolución acotada (THUMB_MAX_DPR) que sigue viéndose nítida. */
+const thumbVisible = new Set();
+let thumbObserver = null;
+let thumbPumpRunning = false;
+
+function observeThumb(icon) {
+    if (!thumbObserver) {
+        thumbObserver = new IntersectionObserver(entries => {
+            for (const e of entries) {
+                if (e.isIntersecting) thumbVisible.add(e.target); else thumbVisible.delete(e.target);
+            }
+            pumpThumbnails();
+        }, { root: ui.thumbList, rootMargin: '600px 0px' });
+    }
+    thumbObserver.observe(icon);
+}
+
+/** Marca una miniatura para redibujar (la imagen anterior queda visible hasta tener la nueva). */
+function markThumbStale(icon) {
+    icon._thumbGen = (icon._thumbGen || 0) + 1;
+    icon.dataset.stale = '1';
+}
+
+function releaseThumbImage(icon) {
+    const img = icon.querySelector('img');
+    if (img && img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+}
+
+/** Vacía el panel de miniaturas liberando sus imágenes. */
+function clearThumbList() {
+    ui.thumbList.querySelectorAll('.thumb-icon').forEach(releaseThumbImage);
+    if (thumbObserver) thumbObserver.disconnect();
+    thumbVisible.clear();
+    ui.thumbList.innerHTML = '';
+}
 
 function highlightCurrentThumbnail() {
     Array.from(ui.thumbList.children).forEach((el, i) => el.classList.toggle('selected', i === state.currentPage));
@@ -714,21 +876,17 @@ function highlightCurrentThumbnail() {
 
 async function generateThumbnails(onlyPages = null) {
     const doc = state.pdfJsDoc;
-    const token = ++thumbToken;
     // Misma cantidad de páginas: se conservan las miniaturas en pantalla (no se vacía la lista)
     // y sólo se redibujan las hojas modificadas, más las que aún no se habían llegado a dibujar.
     if (doc && ui.thumbList.children.length === doc.numPages) {
         const icons = Array.from(ui.thumbList.querySelectorAll('.thumb-icon'));
-        if (onlyPages) onlyPages.forEach(i => pendingThumbPages.add(i));
-        else icons.forEach((_, i) => pendingThumbPages.add(i));
-        const order = [...pendingThumbPages].filter(i => i >= 0 && i < doc.numPages);
-        icons.forEach((icon, i) => { if (!icon.firstChild && !pendingThumbPages.has(i)) order.push(i); });
+        if (onlyPages) onlyPages.forEach(i => { if (icons[i]) markThumbStale(icons[i]); });
+        else icons.forEach(markThumbStale);
         highlightCurrentThumbnail();
-        await renderThumbnailCanvases(token, icons, order);
+        pumpThumbnails();
         return;
     }
-    pendingThumbPages.clear();
-    ui.thumbList.innerHTML = '';
+    clearThumbList();
     if (!doc) return;
 
     const icons = [];
@@ -738,6 +896,7 @@ async function generateThumbnails(onlyPages = null) {
         item.draggable = true;
         const icon = document.createElement('div');
         icon.className = 'thumb-icon';
+        markThumbStale(icon);
         const label = document.createElement('div');
         label.className = 'thumb-label';
         label.textContent = String(i + 1);
@@ -756,45 +915,68 @@ async function generateThumbnails(onlyPages = null) {
         icons.push(icon);
     }
     highlightCurrentThumbnail();
-    await renderThumbnailCanvases(token, icons);
+    icons.forEach(observeThumb);
+    pumpThumbnails();
 }
 
 /**
- * Dibuja (o redibuja) las miniaturas con la resolución justa para el ancho actual
- * del panel, que el usuario puede cambiar arrastrando su borde.
+ * Dibuja, de a una, las miniaturas pendientes que están a la vista, con la resolución justa
+ * para el ancho actual del panel (que el usuario puede cambiar arrastrando su borde).
  */
-async function renderThumbnailCanvases(token, icons, onlyPages = null) {
-    const doc = state.pdfJsDoc;
-    const dpr = window.devicePixelRatio || 1;
-    const indices = onlyPages || Array.from({ length: Math.min(doc.numPages, icons.length) }, (_, i) => i);
+async function pumpThumbnails() {
+    if (thumbPumpRunning) return;
+    thumbPumpRunning = true;
     try {
-        for (const i of indices) {
-            if (token !== thumbToken) return;
-            const box = icons[i];
-            const boxW = box.clientWidth || 110;
-            const boxH = box.clientHeight || 150;
-            const page = await doc.getPage(i + 1);
-            const base = page.getViewport({ scale: 1 });
-            const scale = Math.min(boxW / base.width, boxH / base.height);
-            const viewport = page.getViewport({ scale: scale * dpr });
-            const canvas = document.createElement('canvas');
-            canvas.width = Math.floor(viewport.width);
-            canvas.height = Math.floor(viewport.height);
-            await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-            if (token !== thumbToken) return;
-            box.replaceChildren(canvas);
-            pendingThumbPages.delete(i);
+        await null;
+        for (;;) {
+            await mainRenderPromise; // la hoja actual tiene prioridad
+            const doc = state.pdfJsDoc;
+            if (!doc) break;
+            const icons = ui.thumbList.querySelectorAll('.thumb-icon');
+            let index = -1;
+            for (let i = 0; i < icons.length && i < doc.numPages; i++) {
+                if (icons[i].dataset.stale === '1' && thumbVisible.has(icons[i])) { index = i; break; }
+            }
+            if (index < 0) break;
+            const box = icons[index];
+            const gen = box._thumbGen;
+            try {
+                const boxW = box.clientWidth || 110;
+                const boxH = box.clientHeight || 150;
+                const page = await doc.getPage(index + 1);
+                const base = page.getViewport({ scale: 1 });
+                const scale = Math.min(boxW / base.width, boxH / base.height);
+                const viewport = page.getViewport({ scale: scale * thumbPixelRatio() });
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.floor(viewport.width);
+                canvas.height = Math.floor(viewport.height);
+                await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                const blob = await canvasToBlob(canvas, 'image/webp', 0.92);
+                const img = document.createElement('img');
+                img.alt = '';
+                img.draggable = false;
+                img.src = URL.createObjectURL(blob);
+                try { await img.decode(); } catch (_) { /* se muestra igual al cargar */ }
+                // Si la hoja se volvió a modificar mientras tanto, esta imagen ya no vale
+                if (box._thumbGen !== gen || !box.isConnected) { URL.revokeObjectURL(img.src); continue; }
+                releaseThumbImage(box);
+                box.replaceChildren(img);
+                delete box.dataset.stale;
+            } catch (e) {
+                // Si el documento se recargó se reintenta con el nuevo; si no, se deja como está
+                if (doc === state.pdfJsDoc && box._thumbGen === gen) delete box.dataset.stale;
+            }
         }
-    } catch (e) {
-        // El documento pudo recargarse mientras se generaban las miniaturas.
+    } finally {
+        thumbPumpRunning = false;
     }
 }
 
 /** Tras cambiar el ancho del panel de miniaturas se re-renderizan en la nueva resolución. */
 window.addEventListener('thumbnails-resized', () => {
     if (!state.pdfJsDoc) return;
-    const icons = Array.from(ui.thumbList.querySelectorAll('.thumb-icon'));
-    if (icons.length) renderThumbnailCanvases(++thumbToken, icons);
+    ui.thumbList.querySelectorAll('.thumb-icon').forEach(markThumbStale);
+    pumpThumbnails();
 });
 
 function onThumbnailClicked(item) {
@@ -1013,6 +1195,7 @@ function toggleQrTool() {
     loadScript(ZXING_URL)
         .then(() => window.ZXingWASM && window.ZXingWASM.getZXingModule())
         .catch(e => console.warn(e));
+    loadScript(JSQR_URL).catch(e => console.warn(e)); // lector de respaldo: se baja sólo al usar Validar QR
 }
 
 /**
@@ -1023,12 +1206,14 @@ function toggleQrTool() {
  */
 async function readQrInRegion(pageIndex, rect) {
     let zxing = null;
+    const jsqrReady = loadScript(JSQR_URL).catch(e => console.warn(e));
     try {
         await loadScript(ZXING_URL);
         zxing = window.ZXingWASM || null;
     } catch (e) {
         console.warn(e);
     }
+    await jsqrReady;
     if (!zxing && typeof jsQR !== 'function') return { available: false, text: null };
 
     for (const dpi of [300, 600, 150, 450]) {
@@ -1284,6 +1469,7 @@ async function exportToImages() {
             downloadBlob(files[0].blob, files[0].name);
             destination = 'Descargas';
         } else {
+            await loadScript(JSZIP_URL);
             const zip = new JSZip();
             files.forEach(f => zip.file(f.name, f.blob));
             downloadBlob(await zip.generateAsync({ type: 'blob' }), `${baseName}_imagenes.zip`);

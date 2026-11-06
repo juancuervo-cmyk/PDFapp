@@ -127,7 +127,8 @@ class SplitDialog {
                 data: doc.bytes.slice(),
                 cMapUrl: `${PDFJS_ASSETS}cmaps/`,
                 cMapPacked: true,
-                standardFontDataUrl: `${PDFJS_ASSETS}standard_fonts/`
+                standardFontDataUrl: `${PDFJS_ASSETS}standard_fonts/`,
+                worker: pdfjsWorker()
             }).promise;
             doc.pages = doc.pdf.numPages;
             doc.divisions = [{ id: this.nextId++, text: doc.pages > 1 ? `1-${doc.pages}` : '1' }];
@@ -158,6 +159,7 @@ class SplitDialog {
         if (this.busy) return;
         this.docs = this.docs.filter(d => d !== doc);
         if (doc.pdf) doc.pdf.destroy();
+        this.releaseThumbs(doc);
         this.render();
     }
 
@@ -186,7 +188,7 @@ class SplitDialog {
         this.render();
     }
 
-    /** Renderiza (una sola vez) la miniatura de una hoja y devuelve su imagen como data URL. */
+    /** Renderiza (una sola vez) la miniatura de una hoja y devuelve la URL de su imagen. */
     thumb(doc, pageIndex) {
         if (!doc.thumbs.has(pageIndex)) {
             doc.thumbs.set(pageIndex, (async () => {
@@ -198,7 +200,9 @@ class SplitDialog {
                 canvas.width = Math.floor(viewport.width);
                 canvas.height = Math.floor(viewport.height);
                 await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-                return canvas.toDataURL('image/png');
+                // WebP comprimido en vez de PNG en base64: pesa mucho menos y no traba la ventana
+                const blob = await canvasToBlob(canvas, 'image/webp', 0.9);
+                return URL.createObjectURL(blob);
             })());
         }
         return doc.thumbs.get(pageIndex);
@@ -683,6 +687,7 @@ class SplitDialog {
     downloadZip() {
         return this.runDownload(async divisions => {
             const files = await this.buildDivisionFiles(divisions);
+            await loadScript(JSZIP_URL);
             const zip = new JSZip();
             files.forEach(f => zip.file(f.name, f.bytes));
             const blob = await zip.generateAsync({ type: 'blob' });
@@ -716,7 +721,13 @@ class SplitDialog {
     finish(result) {
         this.closeGrid(true);
         closeDialog(this.dlg);
-        this.docs.forEach(d => { if (d.pdf) d.pdf.destroy(); });
+        this.docs.forEach(d => { if (d.pdf) d.pdf.destroy(); this.releaseThumbs(d); });
         this.resolve(result);
+    }
+
+    /** Libera la memoria de las imágenes de miniatura de un documento. */
+    releaseThumbs(doc) {
+        doc.thumbs.forEach(p => p.then(url => URL.revokeObjectURL(url), () => {}));
+        doc.thumbs.clear();
     }
 }

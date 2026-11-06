@@ -154,7 +154,7 @@ async function addInvisibleTextLayer(doc, outPage, srcPage, baseViewport, font) 
 async function rebuildEncryptedDoc(bytes) {
     let src;
     try {
-        src = await pdfjsLib.getDocument({ data: bytes.slice() }).promise;
+        src = await pdfjsLib.getDocument({ data: bytes.slice(), worker: pdfjsWorker() }).promise;
     } catch (e) {
         throw new Error('El PDF requiere una contraseña para abrirse y no puede editarse.');
     }

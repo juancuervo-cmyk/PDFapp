@@ -283,7 +283,7 @@ class GridViewDialog {
     async renderThumbnails() {
         const token = ++this.renderToken;
         const thumbZoom = Math.max(0.2, this.iconWidth / 200.0);
-        const dpr = window.devicePixelRatio || 1;
+        const dpr = thumbPixelRatio();
         for (const pageIndex of [...new Set(this.items)]) {
             if (token !== this.renderToken) return;
             const page = await this.pdfDoc.getPage(pageIndex + 1);
