@@ -636,6 +636,7 @@ async function renderCurrentPageNow({ updateThumbnails = false } = {}) {
         c.style.height = `${cssH}px`;
     }
     ui.pageCanvas.getContext('2d').drawImage(offscreen, 0, 0);
+    renderTextLayer(page, token);
     state.pageMapper = makePageMapper(page.view, page.rotate);
     refreshImageStampRects(page);
     renderSearchHighlights();
@@ -652,6 +653,182 @@ async function renderCurrentPageNow({ updateThumbnails = false } = {}) {
 
     if (updateThumbnails) generateThumbnails();
     syncPageSlots(doc);
+}
+
+/* ---------- Capa de texto seleccionable ----------
+   El texto real de la página, invisible y ubicado sobre el dibujo (como en Chrome, Firefox
+   o Acrobat): con la herramienta Navegar se puede seleccionar con el cursor y copiar.
+   Con las demás herramientas no recibe el mouse (ver CSS) y la página se usa para editar. */
+
+let textLayerTask = null;
+let textLayerData = null; // { layer, items, divs }: cada span de la capa con su fragmento de texto del PDF
+
+function textLayerEl() {
+    let layer = document.getElementById('text-layer');
+    if (!layer) {
+        layer = document.createElement('div');
+        layer.id = 'text-layer';
+        layer.className = 'textLayer';
+        // Clic sobre una imagen colocada o con la burbuja de pegado: lo maneja la página como siempre
+        layer.addEventListener('mousedown', e => {
+            if (e.button !== 0 || !state.pageMapper) return;
+            if (pasteHint || imageStampAt(screenToPdfCoords(eventToCanvasPoint(e)))) {
+                onPageMouseDown(e);
+                return;
+            }
+            // Igual que el visor de pdf.js: un bloque invisible desde la altura del clic hacia abajo
+            // evita que la selección salte a otra parte de la página al pasar por zonas sin texto
+            const end = layer.querySelector('.endOfContent');
+            if (end) {
+                const r = layer.getBoundingClientRect();
+                end.style.top = `${(Math.max(0, (e.clientY - r.top) / r.height) * 100).toFixed(2)}%`;
+                end.classList.add('active');
+            }
+        });
+        window.addEventListener('mouseup', () => {
+            const end = layer.querySelector('.endOfContent');
+            if (end) { end.classList.remove('active'); end.style.top = ''; }
+        });
+        layer.addEventListener('dblclick', onPageDoubleClick);
+        // Copiar: texto plano (sin fondo ni formato) y armado según la posición real de cada palabra
+        document.addEventListener('copy', e => {
+            const text = selectedTextLayerText();
+            if (text === null) return;
+            e.clipboardData.setData('text/plain', text);
+            e.preventDefault();
+        });
+        // Arrastrar la selección a otra aplicación: también como texto plano
+        layer.addEventListener('dragstart', e => {
+            const text = selectedTextLayerText();
+            if (text === null || !e.dataTransfer) return;
+            e.dataTransfer.clearData();
+            e.dataTransfer.setData('text/plain', text);
+            e.dataTransfer.effectAllowed = 'copy';
+        });
+    }
+    if (layer.parentElement !== ui.pageWrapper || layer.previousElementSibling !== ui.overlay) ui.overlay.after(layer);
+    return layer;
+}
+
+async function renderTextLayer(page, token) {
+    const layer = textLayerEl();
+    if (textLayerTask) { textLayerTask.cancel(); textLayerTask = null; }
+    layer.replaceChildren();
+    textLayerData = null;
+    layer.style.setProperty('--scale-factor', String(state.zoomFactor));
+    try {
+        const textContent = await page.getTextContent();
+        if (token !== renderToken) return;
+        const divs = [];
+        const task = pdfjsLib.renderTextLayer({
+            textContentSource: textContent,
+            container: layer,
+            viewport: page.getViewport({ scale: state.zoomFactor }),
+            textDivs: divs
+        });
+        textLayerTask = task;
+        await task.promise;
+        if (token !== renderToken) return;
+        const end = document.createElement('div');
+        end.className = 'endOfContent';
+        layer.appendChild(end);
+        const items = textContent.items.filter(it => it.str !== undefined);
+        if (items.length === divs.length) textLayerData = { layer, items, divs };
+    } catch (e) {
+        if (!(e && e.name === 'AbortException')) console.warn('Capa de texto:', e);
+    }
+}
+
+/**
+ * Texto de la selección hecha sobre la capa de texto, o null si la selección no está ahí.
+ * No se usa el texto que arma el navegador con los spans (cortes de línea y espacios de más):
+ * se reconstruye con la posición de cada fragmento en la página.
+ */
+function selectedTextLayerText() {
+    const sel = window.getSelection();
+    const layer = document.getElementById('text-layer');
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !layer) return null;
+    const range = sel.getRangeAt(0);
+    if (!layer.contains(range.commonAncestorContainer) && !range.intersectsNode(layer)) return null;
+    const data = textLayerData;
+    if (!data || data.layer !== layer) return sel.toString().replace(/[ \t]+/g, ' ');
+
+    const parts = [];
+    data.divs.forEach((div, i) => {
+        if (!range.intersectsNode(div)) return;
+        const item = data.items[i];
+        let str = item.str;
+        if (div.contains(range.endContainer)) str = str.slice(0, textOffsetIn(div, range.endContainer, range.endOffset));
+        if (div.contains(range.startContainer)) str = str.slice(textOffsetIn(div, range.startContainer, range.startOffset));
+        if (!str) return;
+        const t = item.transform;
+        const h = Math.hypot(t[2], t[3]) || item.height || 10;
+        parts.push({ str, x: t[4], y: t[5], w: item.width, h });
+    });
+    if (!parts.length) return sel.toString();
+    return buildTextFromParts(parts);
+}
+
+/** Posición (en caracteres) de un punto de la selección dentro del texto de un span. */
+function textOffsetIn(div, node, offset) {
+    if (node.nodeType === Node.TEXT_NODE) {
+        let n = 0;
+        const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT);
+        for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+            if (t === node) return n + offset;
+            n += t.length;
+        }
+        return n;
+    }
+    let n = 0;
+    for (let k = 0; k < offset && k < node.childNodes.length; k++) n += node.childNodes[k].textContent.length;
+    return n;
+}
+
+/** Une los fragmentos en líneas y párrafos: renglones del mismo párrafo seguidos, sin espacios de más. */
+function buildTextFromParts(parts) {
+    const lines = [];
+    let cur = null;
+    for (const p of parts) {
+        const sameLine = cur && Math.abs(p.y - cur.y) < Math.max(p.h, cur.h) * 0.5 && p.x > cur.right - cur.h;
+        if (!sameLine) {
+            cur = { text: '', x: p.x, y: p.y, h: p.h, right: p.x };
+            lines.push(cur);
+        } else if (p.x - cur.right > p.h * 0.15 && !/\s$/.test(cur.text) && !/^\s/.test(p.str)) {
+            cur.text += ' ';
+        }
+        cur.text += p.str;
+        cur.h = Math.max(cur.h, p.h);
+        if (p.w > 0) cur.right = Math.max(cur.right, p.x + p.w);
+    }
+    for (const l of lines) l.text = l.text.replace(/\s+/g, ' ').trim();
+    const content = lines.filter(l => l.text);
+    if (!content.length) return '';
+
+    const left = Math.min(...content.map(l => l.x));
+    const right = Math.max(...content.map(l => l.right));
+    const width = Math.max(1, right - left);
+    let out = content[0].text;
+    for (let i = 1; i < content.length; i++) {
+        const prev = content[i - 1];
+        const line = content[i];
+        const lh = Math.max(prev.h, line.h);
+        const gap = prev.y - line.y; // en el PDF la y crece hacia arriba
+        const shortPrev = right - prev.right;
+        const newParagraph =
+            gap < 0 || gap > lh * 1.8 ||                                          // salto hacia arriba (otra columna) o espacio entre párrafos
+            shortPrev > width * 0.4 ||                                            // renglón anterior muy corto
+            (shortPrev > Math.max(lh * 2, width * 0.08) && /[.!?:;»”")]$/.test(prev.text)) || // corto y termina una oración
+            /^([•·▪●◦○■□–—*-]|\d{1,3}[.)]|[a-zA-Z][.)])\s/.test(line.text);     // viñeta o ítem numerado
+        if (newParagraph) {
+            out += '\n' + line.text;
+        } else if (/\p{L}-$/u.test(out) && /^\p{Ll}/u.test(line.text)) {
+            out = out.slice(0, -1) + line.text;                                  // palabra cortada con guion al final del renglón
+        } else {
+            out += ' ' + line.text;
+        }
+    }
+    return out;
 }
 
 /* ---------- Vista de todas las páginas ---------- */
@@ -1177,6 +1354,12 @@ function setMode(mode) {
         }
     }
     ui.overlay.dataset.mode = mode;
+    // Fuera de Navegar no se puede seleccionar texto: se quita la selección que hubiera
+    if (mode !== 'navigate') {
+        const sel = window.getSelection();
+        const tl = document.getElementById('text-layer');
+        if (sel && tl && sel.anchorNode && tl.contains(sel.anchorNode)) sel.removeAllRanges();
+    }
     ui.btnQrValidate.classList.toggle('active', mode === 'qr');
     setTextFormatBarVisible(mode === 'text');
 }
@@ -2845,10 +3028,13 @@ function onPageMouseMove(e) {
     positionPasteHint();
     const mode = state.currentMode;
     // Cursor de mano sobre las imágenes que se pueden reubicar
-    if (e.target === ui.overlay && state.pageMapper && !interaction.interactiveDrag && !interaction.drawing) {
+    const tl = document.getElementById('text-layer');
+    const onTextLayer = !!(tl && tl.contains(e.target));
+    if ((e.target === ui.overlay || onTextLayer) && state.pageMapper && !interaction.interactiveDrag && !interaction.drawing) {
         const over = !pasteHint && (mode === 'navigate' || mode === 'select') &&
             imageStampAt(screenToPdfCoords(eventToCanvasPoint(e)));
         ui.overlay.style.cursor = over ? 'pointer' : '';
+        if (tl) tl.classList.toggle('over-image', over);
     }
     if (interaction.drawing && mode === 'draw') {
         interaction.currentStroke.push(canvasToScreen(eventToCanvasPoint(e)));
@@ -3064,7 +3250,8 @@ function initUi() {
     }, true);
     // Clic fuera de la página con la burbuja activa: se cancela el pegado por clic
     document.addEventListener('mousedown', e => {
-        if (pasteHint && e.target !== ui.overlay) hidePasteHint();
+        const tl = document.getElementById('text-layer');
+        if (pasteHint && e.target !== ui.overlay && !(tl && tl.contains(e.target))) hidePasteHint();
     }, true);
     // Pegar imagen (Ctrl+V)
     document.addEventListener('paste', onPaste);
