@@ -372,6 +372,7 @@ async function loadNewDocument(files, fileHandle = null) {
     enableControls(true);
     updateUndoRedoButtons();
     setModified(false);
+    ui.thumbList.innerHTML = ''; // documento nuevo: no se reutilizan las miniaturas del anterior
     await reloadViewer();
 }
 
@@ -509,7 +510,6 @@ async function splitDocument() {
 let renderToken = 0;
 let currentRenderTask = null;
 let thumbToken = 0;
-let thumbsComplete = false; // true cuando todas las miniaturas del documento actual están dibujadas
 const pendingThumbPages = new Set(); // hojas modificadas cuya miniatura aún no se redibujó
 const wordsCache = new Map();
 
@@ -714,18 +714,19 @@ function highlightCurrentThumbnail() {
 
 async function generateThumbnails(onlyPages = null) {
     const doc = state.pdfJsDoc;
-    // Sólo se redibujan las hojas modificadas si la lista ya está completa y la cantidad de páginas no cambió.
-    if (onlyPages && doc && thumbsComplete && ui.thumbList.children.length === doc.numPages) {
+    const token = ++thumbToken;
+    // Misma cantidad de páginas: se conservan las miniaturas en pantalla (no se vacía la lista)
+    // y sólo se redibujan las hojas modificadas, más las que aún no se habían llegado a dibujar.
+    if (doc && ui.thumbList.children.length === doc.numPages) {
         const icons = Array.from(ui.thumbList.querySelectorAll('.thumb-icon'));
-        // Se suman las hojas pendientes de un redibujo anterior que pudo quedar interrumpido.
-        for (const i of onlyPages) pendingThumbPages.add(i);
-        const pages = [...pendingThumbPages].filter(i => i >= 0 && i < doc.numPages);
+        if (onlyPages) onlyPages.forEach(i => pendingThumbPages.add(i));
+        else icons.forEach((_, i) => pendingThumbPages.add(i));
+        const order = [...pendingThumbPages].filter(i => i >= 0 && i < doc.numPages);
+        icons.forEach((icon, i) => { if (!icon.firstChild && !pendingThumbPages.has(i)) order.push(i); });
         highlightCurrentThumbnail();
-        await renderThumbnailCanvases(++thumbToken, icons, pages);
+        await renderThumbnailCanvases(token, icons, order);
         return;
     }
-    const token = ++thumbToken;
-    thumbsComplete = false;
     pendingThumbPages.clear();
     ui.thumbList.innerHTML = '';
     if (!doc) return;
@@ -766,7 +767,6 @@ async function renderThumbnailCanvases(token, icons, onlyPages = null) {
     const doc = state.pdfJsDoc;
     const dpr = window.devicePixelRatio || 1;
     const indices = onlyPages || Array.from({ length: Math.min(doc.numPages, icons.length) }, (_, i) => i);
-    if (!onlyPages) thumbsComplete = false;
     try {
         for (const i of indices) {
             if (token !== thumbToken) return;
@@ -783,9 +783,8 @@ async function renderThumbnailCanvases(token, icons, onlyPages = null) {
             await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
             if (token !== thumbToken) return;
             box.replaceChildren(canvas);
-            if (onlyPages) pendingThumbPages.delete(i);
+            pendingThumbPages.delete(i);
         }
-        if (!onlyPages && token === thumbToken) thumbsComplete = true;
     } catch (e) {
         // El documento pudo recargarse mientras se generaban las miniaturas.
     }
