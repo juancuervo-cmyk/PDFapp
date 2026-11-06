@@ -7,6 +7,26 @@
  * Devuelve { bytes, includesCurrent } al elegir "Unir y abrir", o null.
  * ========================================================================= */
 
+/**
+ * Ctrl + rueda del mouse dentro de las ventanas Unir / Dividir: agranda o achica
+ * sólo las miniaturas (variable CSS --thumb-zoom), no el resto de la página.
+ * El tamaño elegido se recuerda mientras la app está abierta.
+ */
+const THUMB_ZOOM = { value: 1, min: 0.6, max: 2.2, step: 0.15 };
+function attachThumbZoom(dlg) {
+    dlg.style.setProperty('--thumb-zoom', String(THUMB_ZOOM.value));
+    dlg.addEventListener('wheel', e => {
+        if (!e.ctrlKey && !e.metaKey) return;
+        e.preventDefault(); // evita el zoom de toda la página del navegador
+        const dir = e.deltaY < 0 ? 1 : -1;
+        const next = Math.round(Math.min(THUMB_ZOOM.max, Math.max(THUMB_ZOOM.min, THUMB_ZOOM.value + dir * THUMB_ZOOM.step)) * 100) / 100;
+        if (next === THUMB_ZOOM.value) return;
+        THUMB_ZOOM.value = next;
+        const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        gsap.to(dlg, { '--thumb-zoom': next, duration: reduce ? 0 : 0.15, ease: 'power2.out', overwrite: true });
+    }, { passive: false });
+}
+
 class MergeDialog {
     /** `current` = { name, bytes } del documento abierto (opcional): entra como primer archivo. */
     constructor(current = null) {
@@ -60,6 +80,7 @@ class MergeDialog {
         dlg.appendChild(this.fileInput);
         document.body.appendChild(dlg);
         this.dlg = dlg;
+        attachThumbZoom(dlg);
         this.listEl = dlg.querySelector('.merge-list');
         this.statusEl = dlg.querySelector('.merge-status');
         this.btnDownload = dlg.querySelector('[data-act="download"]');

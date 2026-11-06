@@ -82,6 +82,7 @@ class SplitDialog {
         this.dlg = dlg;
         this.infoEl = dlg.querySelector('.merge-info');
         this.listEl = dlg.querySelector('.split-list');
+        attachThumbZoom(dlg);
         this.statusEl = dlg.querySelector('.merge-status');
         this.btnSeparate = dlg.querySelector('[data-act="separate"]');
         this.btnZip = dlg.querySelector('[data-act="zip"]');
@@ -521,10 +522,15 @@ class SplitDialog {
     }
 
     updatePreviews(row, doc, pages) {
+        // Con una sola hoja se muestra una única miniatura (si no parecería que hay dos hojas)
+        const single = !!pages && pages.length === 1;
         [['first', pages ? pages[0] : null], ['last', pages ? pages[pages.length - 1] : null]].forEach(([pos, pageIndex]) => {
             const box = row.querySelector(`.split-preview[data-pos="${pos}"]`);
             const thumb = box.querySelector('.split-thumb');
-            box.querySelector('.split-cap').textContent = `${pos === 'first' ? 'Inicio' : 'Fin'}${pageIndex !== null ? ` · hoja ${pageIndex + 1}` : ''}`;
+            box.hidden = single && pos === 'last';
+            if (box.hidden) return;
+            const label = single ? 'Hoja' : (pos === 'first' ? 'Inicio' : 'Fin');
+            box.querySelector('.split-cap').textContent = single ? `Hoja ${pageIndex + 1}` : `${label}${pageIndex !== null ? ` · hoja ${pageIndex + 1}` : ''}`;
             if (pageIndex === null) { thumb.innerHTML = ''; return; }
             if (thumb.dataset.page === String(pageIndex) && thumb.querySelector('img')) return;
             thumb.dataset.page = String(pageIndex);
