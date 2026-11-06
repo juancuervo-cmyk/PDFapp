@@ -143,7 +143,14 @@
     // Posición del menú izquierdo: a la derecha de las miniaturas (padding de #main 9 + ancho + gap 4 + margen 16),
     // o pegado al borde si están ocultas
     const editToolsLeftFor = w => 9 + w + 4 + 16;
-    const EDIT_TOOLS_LEFT_NO_THUMBS = 25;
+    const btnThumbToggle = document.getElementById('btn-thumb-toggle');
+    // Cerrado, el panel no desaparece: queda una franja angosta que contiene el botón abrir/cerrar
+    const THUMB_COLLAPSED_WIDTH = 42;
+    const EDIT_TOOLS_LEFT_NO_THUMBS = editToolsLeftFor(THUMB_COLLAPSED_WIDTH);
+    // Posición del botón abrir/cerrar: arriba a la derecha del panel, o centrado en la franja si está cerrado
+    const thumbToggleLeftFor = w => 9 + w - 34;
+    const THUMB_TOGGLE_LEFT_CLOSED = 9 + (THUMB_COLLAPSED_WIDTH - 28) / 2;
+    let thumbsOpen = true;
 
     let thumbWidth = THUMB_DEFAULT_WIDTH;
     try {
@@ -154,7 +161,7 @@
     function applyThumbWidth(w) {
         thumbWidth = Math.round(Math.min(THUMB_MAX_WIDTH, Math.max(THUMB_MIN_WIDTH, w)));
         document.documentElement.style.setProperty('--thumb-w', `${thumbWidth}px`);
-        if (!thumbList.hidden) editTools.style.left = `${editToolsLeftFor(thumbWidth)}px`;
+        if (thumbsOpen) editTools.style.left = `${editToolsLeftFor(thumbWidth)}px`;
     }
 
     function thumbWidthChanged() {
@@ -167,7 +174,7 @@
 
     // Arrastrar el divisor cambia el ancho del panel de miniaturas
     thumbResizer.addEventListener('pointerdown', e => {
-        if (e.button !== 0 || thumbList.hidden) return;
+        if (e.button !== 0 || !thumbsOpen) return;
         e.preventDefault();
         const startX = e.clientX;
         const startW = thumbWidth;
@@ -190,7 +197,7 @@
 
     // Doble clic: vuelve al ancho original
     thumbResizer.addEventListener('dblclick', () => {
-        if (thumbList.hidden || thumbWidth === THUMB_DEFAULT_WIDTH) return;
+        if (!thumbsOpen || thumbWidth === THUMB_DEFAULT_WIDTH) return;
         const proxy = { w: thumbWidth };
         gsap.to(proxy, {
             w: THUMB_DEFAULT_WIDTH, duration: 0.3, ease: 'power2.inOut',
@@ -199,34 +206,44 @@
         });
     });
 
-    btnThumbView.addEventListener('click', () => {
-        const show = btnThumbView.getAttribute('aria-checked') !== 'true';
+    function setThumbsVisible(show) {
+        thumbsOpen = show;
         btnThumbView.setAttribute('aria-checked', String(show));
+        btnThumbToggle.setAttribute('aria-pressed', String(show));
+        btnThumbToggle.title = show ? 'Ocultar miniaturas' : 'Mostrar miniaturas';
 
-        gsap.killTweensOf([thumbList, editTools, thumbResizer]);
+        gsap.killTweensOf([thumbList, editTools, thumbResizer, btnThumbToggle]);
+        gsap.fromTo(btnThumbToggle,
+            { left: show ? THUMB_TOGGLE_LEFT_CLOSED : thumbToggleLeftFor(thumbWidth) },
+            { left: show ? thumbToggleLeftFor(thumbWidth) : THUMB_TOGGLE_LEFT_CLOSED, duration: 0.3, ease: 'power2.inOut',
+              // abierto: vuelve a seguir el ancho del panel por CSS (--thumb-w)
+              onComplete: () => { if (show) gsap.set(btnThumbToggle, { clearProps: 'left' }); } });
         if (show) {
-            thumbList.hidden = false;
+            thumbList.classList.remove('collapsed');
             gsap.fromTo(thumbList,
-                { width: 0, flexBasis: 0, autoAlpha: 0 },
-                { width: thumbWidth, flexBasis: thumbWidth, autoAlpha: 1, duration: 0.3, ease: 'power2.out',
-                  clearProps: 'width,flexBasis,opacity,visibility',
+                { width: THUMB_COLLAPSED_WIDTH, flexBasis: THUMB_COLLAPSED_WIDTH },
+                { width: thumbWidth, flexBasis: thumbWidth, duration: 0.3, ease: 'power2.out',
+                  clearProps: 'width,flexBasis',
                   onComplete: () => window.dispatchEvent(new CustomEvent('thumbnails-resized')) });
             gsap.fromTo(thumbResizer, { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.2, delay: 0.25, clearProps: 'opacity,visibility' });
         } else {
             gsap.set(thumbResizer, { autoAlpha: 0 });
-            gsap.to(thumbList, {
-                width: 0, flexBasis: 0, autoAlpha: 0, duration: 0.25, ease: 'power2.in',
-                onComplete: () => {
-                    thumbList.hidden = true;
-                    gsap.set([thumbList, thumbResizer], { clearProps: 'width,flexBasis,opacity,visibility' });
-                },
-            });
+            gsap.fromTo(thumbList,
+                { width: thumbWidth, flexBasis: thumbWidth },
+                { width: THUMB_COLLAPSED_WIDTH, flexBasis: THUMB_COLLAPSED_WIDTH, duration: 0.25, ease: 'power2.in',
+                  onComplete: () => {
+                      thumbList.classList.add('collapsed');
+                      gsap.set([thumbList, thumbResizer], { clearProps: 'width,flexBasis,opacity,visibility' });
+                  } });
         }
         gsap.to(editTools, {
             left: show ? editToolsLeftFor(thumbWidth) : EDIT_TOOLS_LEFT_NO_THUMBS,
             duration: 0.3, ease: 'power2.inOut',
         });
-    });
+    }
+
+    btnThumbView.addEventListener('click', () => setThumbsVisible(btnThumbView.getAttribute('aria-checked') !== 'true'));
+    btnThumbToggle.addEventListener('click', () => setThumbsVisible(btnThumbToggle.getAttribute('aria-pressed') !== 'true'));
 
     /* ---------- Opciones de la herramienta (color / grosor) ---------- */
 

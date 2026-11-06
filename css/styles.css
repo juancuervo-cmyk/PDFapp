@@ -149,23 +149,14 @@ body.busy, body.busy * { cursor: progress !important; }
     user-select: none;
     flex-shrink: 0;
 }
-.brand-logo {
-    display: grid;
-    place-items: center;
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    color: var(--accent-ink);
-    background-image: linear-gradient(135deg, var(--accent-2), var(--accent));
-    box-shadow: 0 2px 6px var(--accent-soft-2);
+/* Logo (assets/logo pa.svg en línea): letras con el color del texto; ".PDF" y el ojo del cuervo con el acento */
+.brand-svg {
+    display: block;
+    height: 24px;
+    width: auto;
 }
-.brand-logo .ph-icon { width: 18px; height: 18px; }
-.brand-title {
-    font-weight: 700;
-    font-size: 16px;
-    letter-spacing: -0.2px;
-}
-.brand-dot { color: var(--accent-text); }
+.brand-svg .logo-ink { fill: currentColor; }
+.brand-svg .logo-accent { fill: var(--accent-text); }
 
 /* Barras de desplazamiento finas y redondeadas */
 * { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
@@ -1070,6 +1061,33 @@ body.dragging-signature * { cursor: grabbing !important; user-select: none; }
 }
 
 #thumbnail-list[hidden] + #thumb-resizer { display: none; }
+
+/* Botón para abrir / cerrar el panel de miniaturas: arriba a la derecha del panel,
+   o pegado al borde izquierdo cuando está cerrado (toolbar.js anima su posición) */
+#thumbnail-list { padding-top: 40px; }
+#btn-thumb-toggle {
+    position: absolute;
+    z-index: 26;
+    top: 14px;
+    left: calc(9px + var(--thumb-w, 150px) - 34px);
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+}
+#btn-thumb-toggle .ph-icon { width: 17px; height: 17px; }
+#btn-thumb-toggle[aria-pressed="true"] { color: var(--accent-text); }
+
+/* Panel cerrado: franja angosta (42px, ver toolbar.js) que sólo contiene el botón */
+#thumbnail-list.collapsed {
+    width: 42px;
+    flex-basis: 42px;
+    overflow: hidden;
+}
+#thumbnail-list.collapsed > * { display: none; }
+#thumbnail-list.collapsed + #thumb-resizer { display: none; }
 
 body.resizing-thumbs,
 body.resizing-thumbs * { cursor: col-resize !important; user-select: none; }
