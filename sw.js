@@ -3,7 +3,7 @@
    siempre se usa la última versión publicada) y las librerías de CDN, que tienen
    versión fija, se sirven desde la copia guardada. */
 
-const CACHE = 'cuervo-pdf-v2';
+const CACHE = 'cuervo-pdf-v3';
 
 const APP_SHELL = [
     '/',
@@ -15,6 +15,7 @@ const APP_SHELL = [
     '/js/dialogs.js',
     '/js/grid.js',
     '/js/merge.js',
+    '/js/split.js',
     '/js/app.js',
     '/js/toolbar.js',
     '/js/ui-fx.js',

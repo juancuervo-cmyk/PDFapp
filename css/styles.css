@@ -2184,3 +2184,183 @@ button.merge-empty.over {
 .merge-buttons button { display: inline-flex; align-items: center; gap: 6px; }
 .merge-buttons .ph-icon { width: 16px; height: 16px; }
 .merge-dialog.is-busy .merge-card { cursor: progress; }
+
+/* ---------- Ventana Dividir PDF (split.js) ---------- */
+
+dialog.split-dialog[open] {
+    width: min(820px, 94vw);
+    height: min(820px, 92vh);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.split-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 8px 24px 20px;
+}
+
+.split-dialog.file-over .split-list {
+    outline: 2px dashed var(--accent);
+    outline-offset: -8px;
+    border-radius: var(--r-lg);
+    background-color: var(--accent-soft);
+}
+
+.split-doc {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background-color: var(--surface-2);
+}
+
+.split-doc-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.split-doc-icon { display: flex; color: var(--accent-text); }
+.split-doc-icon .ph-icon { width: 20px; height: 20px; }
+.split-doc-name { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.split-doc-meta { flex: 1; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.split-doc-remove.btn-icon { width: 28px; height: 28px; }
+.split-doc-remove.btn-icon:hover:not(:disabled) { color: var(--danger); background-color: var(--danger-soft); }
+.split-doc-loading { display: flex; justify-content: center; padding: 30px; }
+
+.split-row {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    gap: 14px;
+    padding: 12px 12px 12px 44px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background-color: var(--elevated);
+    transition: border-color 0.2s ease;
+}
+.split-row.invalid { border-color: var(--danger); }
+.split-row:hover .merge-remove,
+.split-row .merge-remove:focus-visible { opacity: 1; }
+
+.merge-order.split-order { top: 12px; left: 12px; }
+
+.split-preview {
+    width: 128px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    cursor: zoom-in;
+    user-select: none;
+}
+
+.split-thumb {
+    width: 128px;
+    height: 168px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--r-sm);
+    background-color: var(--hover);
+    overflow: hidden;
+    transition: box-shadow 0.2s ease;
+}
+.split-preview:hover .split-thumb { box-shadow: 0 0 0 2px var(--accent), 0 0 14px var(--glow); }
+.split-thumb img { max-width: 100%; max-height: 100%; background: #fff; box-shadow: var(--shadow-md); border-radius: 3px; }
+
+.split-cap { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+.split-fields {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-right: 24px;
+    font-size: 12px;
+    color: var(--text-2);
+}
+.split-fields label { display: flex; flex-direction: column; gap: 4px; cursor: default; }
+.split-fields .spin { width: 90px; }
+.split-row.invalid .split-range { border-color: var(--danger); }
+.split-count { margin-top: auto; font-size: 12px; color: var(--muted); }
+.split-row.invalid .split-count { color: var(--danger); }
+
+button.split-add {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--accent-text);
+    background: transparent;
+    border: 1px dashed var(--accent);
+}
+button.split-add:hover:not(:disabled) { background-color: var(--accent-soft); border-color: var(--accent); }
+button.split-add .ph-icon { width: 16px; height: 16px; }
+
+button.merge-empty.split-empty {
+    flex-shrink: 0;
+    min-height: 110px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    border-radius: var(--r-lg);
+}
+
+/* Cuadrícula de sólo lectura con las hojas de una división */
+.split-grid {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--elevated);
+    border-radius: inherit;
+}
+
+.split-grid-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 14px 12px 24px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-2);
+}
+.split-grid-head b { color: var(--text); }
+
+.split-grid-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 16px;
+    padding: 18px 24px 24px;
+    align-content: start;
+}
+
+.split-grid-cell { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.split-grid-thumb { width: 130px; height: 172px; display: flex; align-items: center; justify-content: center; }
+.split-grid-thumb img { max-width: 100%; max-height: 100%; background: #fff; box-shadow: var(--shadow-md); border-radius: 3px; }
+.split-grid-label { font-size: 12px; font-weight: 600; color: var(--text-2); }
+
+@media (max-width: 640px) {
+    .split-row { flex-wrap: wrap; }
+    .split-fields { flex-basis: 100%; }
+}
+
+/* Vista Unir de Dividir: partes ordenables (reusa las tarjetas de merge) */
+.split-order-list {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 16px;
+}
+.merge-thumb img { max-width: 100%; max-height: 100%; background: #fff; box-shadow: var(--shadow-md); border-radius: 3px; }
+.merge-buttons button[hidden] { display: none; }

@@ -60,7 +60,6 @@ const ui = {
     btnGridView: $('btn-grid-view'),
     btnQrValidate: $('btn-qr-validate'),
     btnMerge: $('btn-merge'),
-    btnSplit: $('btn-split'),
     btnSignature: $('btn-signature'),
     signatureList: $('signature-list'),
     btnInsertImg: $('btn-insert-img'),
@@ -143,7 +142,7 @@ function setModified(modified = true) {
 }
 
 function enableControls(enable) {
-    [ui.btnGridView, ui.btnQrValidate, ui.btnSplit, ui.btnSignature,ui.btnPrint, ui.btnExport, ui.btnExportImg, ui.btnExportPdf,
+    [ui.btnGridView, ui.btnQrValidate, ui.btnSignature,ui.btnPrint, ui.btnExport, ui.btnExportImg, ui.btnExportPdf,
      ui.btnInsertImg, ui.btnPrev, ui.btnNext, ui.btnZoomIn, ui.btnZoomOut, ui.btnDeletePage, ui.btnBlankPage,
      ui.btnRotateLeft, ui.btnRotateRight, ui.btnSave, ui.btnSaveAs, ui.spinPage, ui.searchInput].forEach(el => { el.disabled = !enable; });
 }
@@ -481,6 +480,25 @@ async function mergePdf() {
     if (hasDocument() && state.isModified) {
         const reply = await msgQuestionYesNo('Cambios sin guardar',
             'El documento actual tiene cambios sin guardar que se perderán al abrir el PDF unido. ¿Deseas continuar?');
+        if (reply !== 'yes') return;
+    }
+    await loadNewDocument([new File([result.bytes], result.name, { type: 'application/pdf' })]);
+}
+
+/**
+ * Dividir: ventana para armar divisiones del documento (o de PDF que se cargan ahí).
+ * Funciona sin documento abierto.
+ */
+async function splitDocument() {
+    // Mientras la ventana está abierta no hay ningún proceso en curso: sin cursor de espera
+    document.body.classList.remove('busy');
+    const current = hasDocument() ? { name: state.currentFilePath || 'Documento actual.pdf', bytes: state.pdfBytes } : null;
+    const result = await new SplitDialog(current).open();
+    document.body.classList.add('busy'); // runTask lo quita al terminar
+    if (!result) return;
+    if (hasDocument() && state.isModified) {
+        const reply = await msgQuestionYesNo('Cambios sin guardar',
+            'El documento actual tiene cambios sin guardar que se perderán al abrir el resultado. ¿Deseas continuar?');
         if (reply !== 'yes') return;
     }
     await loadNewDocument([new File([result.bytes], result.name, { type: 'application/pdf' })]);
@@ -1126,35 +1144,6 @@ function parseStrictInt(text) {
     const t = text.trim();
     if (!/^[+-]?\d+$/.test(t)) throw new Error('número');
     return parseInt(t, 10);
-}
-
-async function extractPages() {
-    if (!hasDocument()) return;
-    const dialogText =
-        `Introduce el rango de páginas a extraer (1 - ${state.totalPages}).\n` +
-        "Ejemplos: '3', '1-5', '1, 3, 5-7'";
-    const inputRange = await inputDialog('Extraer Páginas', dialogText, { defaultValue: String(state.currentPage + 1) });
-    if (inputRange === null || !inputRange.trim()) return;
-
-    let sortedPages;
-    try {
-        sortedPages = parsePageRange(inputRange, state.totalPages);
-    } catch (e) {
-        await msgWarning('Formato Inválido', "Introduce un rango válido. Ejemplo: '1-3, 5'");
-        return;
-    }
-    if (!sortedPages.length) return;
-
-    try {
-        const saved = await saveBytesAs('paginas_extraidas.pdf', async () => {
-            const doc = await loadLibDoc(state.pdfBytes);
-            const extracted = await extractPagesToNewDoc(doc, sortedPages);
-            return extracted.save();
-        });
-        if (saved) await msgInfo('Éxito', `Se extrajeron ${sortedPages.length} página(s) correctamente.`);
-    } catch (e) {
-        await msgCritical('Error', `No se pudieron extraer las páginas:\n${e.message || e}`);
-    }
 }
 
 /** Guardar: sobrescribe el archivo abierto/guardado; si no hay ubicación conocida, actúa como Guardar como. */
@@ -2794,7 +2783,7 @@ function initUi() {
     ui.btnGridView.addEventListener('click', () => runTask(openGridView));
     ui.btnQrValidate.addEventListener('click', toggleQrTool);
     ui.btnMerge.addEventListener('click', () => runTask(mergePdf));
-    ui.btnSplit.addEventListener('click', () => runTask(extractPages));
+    $('btn-divide').addEventListener('click', () => runTask(splitDocument));
     ui.btnSignature.addEventListener('click', () => runTask(configureStamp));
     ui.btnInsertImg.addEventListener('click', insertImageAsPage);
     ui.btnRotateLeft.addEventListener('click', () => runTask(() => rotatePage(-90)));
