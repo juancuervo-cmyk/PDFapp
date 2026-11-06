@@ -386,7 +386,7 @@ async function loadOrMergeDroppedFiles(files) {
                 for (const file of files) {
                     offset += await insertFileIntoDoc(doc, file, insertAt + offset);
                 }
-            });
+            }, { pages: null });
             setModified(true);
         }
     } catch (e) {
@@ -473,7 +473,7 @@ async function mergePdf() {
 
     if (result.includesCurrent && hasDocument()) {
         // El documento abierto forma parte de la unión: se reemplaza su contenido (se puede deshacer)
-        await editDocument(() => loadLibDoc(result.bytes), { newPage: 0 });
+        await editDocument(() => loadLibDoc(result.bytes), { newPage: 0, pages: null });
         setModified(true);
         return;
     }
@@ -509,6 +509,8 @@ async function splitDocument() {
 let renderToken = 0;
 let currentRenderTask = null;
 let thumbToken = 0;
+let thumbsComplete = false; // true cuando todas las miniaturas del documento actual están dibujadas
+const pendingThumbPages = new Set(); // hojas modificadas cuya miniatura aún no se redibujó
 const wordsCache = new Map();
 
 /** Cambia el documento de pdf.js por el de los bytes actuales sin volver a dibujar la página (ediciones de notas). */
@@ -524,7 +526,11 @@ async function swapViewerDocQuietly() {
     if (old) old.destroy();
 }
 
-async function reloadViewer() {
+/**
+ * Recarga el documento de pdf.js. `thumbPages`: índices de las hojas modificadas; si se indica
+ * y la cantidad de páginas no cambió, sólo se redibujan esas miniaturas (null = todas).
+ */
+async function reloadViewer({ thumbPages = null } = {}) {
     const old = state.pdfJsDoc;
     state.pdfJsDoc = await pdfjsLib.getDocument({
         data: state.pdfBytes.slice(),
@@ -540,7 +546,7 @@ async function reloadViewer() {
     if (state.currentPage >= state.totalPages) state.currentPage = Math.max(0, state.totalPages - 1);
     ui.spinPage.max = String(state.totalPages);
 
-    generateThumbnails();
+    generateThumbnails(thumbPages);
     await renderCurrentPage();
     if (search.query) runSearch({ keepIndex: true });
 }
@@ -706,10 +712,22 @@ function highlightCurrentThumbnail() {
     if (current) current.scrollIntoView({ block: 'nearest' });
 }
 
-async function generateThumbnails() {
-    const token = ++thumbToken;
-    ui.thumbList.innerHTML = '';
+async function generateThumbnails(onlyPages = null) {
     const doc = state.pdfJsDoc;
+    // Sólo se redibujan las hojas modificadas si la lista ya está completa y la cantidad de páginas no cambió.
+    if (onlyPages && doc && thumbsComplete && ui.thumbList.children.length === doc.numPages) {
+        const icons = Array.from(ui.thumbList.querySelectorAll('.thumb-icon'));
+        // Se suman las hojas pendientes de un redibujo anterior que pudo quedar interrumpido.
+        for (const i of onlyPages) pendingThumbPages.add(i);
+        const pages = [...pendingThumbPages].filter(i => i >= 0 && i < doc.numPages);
+        highlightCurrentThumbnail();
+        await renderThumbnailCanvases(++thumbToken, icons, pages);
+        return;
+    }
+    const token = ++thumbToken;
+    thumbsComplete = false;
+    pendingThumbPages.clear();
+    ui.thumbList.innerHTML = '';
     if (!doc) return;
 
     const icons = [];
@@ -744,11 +762,13 @@ async function generateThumbnails() {
  * Dibuja (o redibuja) las miniaturas con la resolución justa para el ancho actual
  * del panel, que el usuario puede cambiar arrastrando su borde.
  */
-async function renderThumbnailCanvases(token, icons) {
+async function renderThumbnailCanvases(token, icons, onlyPages = null) {
     const doc = state.pdfJsDoc;
     const dpr = window.devicePixelRatio || 1;
+    const indices = onlyPages || Array.from({ length: Math.min(doc.numPages, icons.length) }, (_, i) => i);
+    if (!onlyPages) thumbsComplete = false;
     try {
-        for (let i = 0; i < doc.numPages && i < icons.length; i++) {
+        for (const i of indices) {
             if (token !== thumbToken) return;
             const box = icons[i];
             const boxW = box.clientWidth || 110;
@@ -763,7 +783,9 @@ async function renderThumbnailCanvases(token, icons) {
             await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
             if (token !== thumbToken) return;
             box.replaceChildren(canvas);
+            if (onlyPages) pendingThumbPages.delete(i);
         }
+        if (!onlyPages && token === thumbToken) thumbsComplete = true;
     } catch (e) {
         // El documento pudo recargarse mientras se generaban las miniaturas.
     }
@@ -827,13 +849,13 @@ ui.thumbList.addEventListener('drop', e => {
 
 async function onPagesReordered(newPageOrder, newCurrentRow) {
     if (!hasDocument()) return;
-    await editDocument(doc => reorderDocument(doc, newPageOrder), { newPage: newCurrentRow });
+    await editDocument(doc => reorderDocument(doc, newPageOrder), { newPage: newCurrentRow, pages: null });
 }
 
 /* ---------- Edición con historial (save_state_for_undo / undo / redo) ---------- */
 
-function pushUndoState(bytes, page) {
-    state.undoStack.push({ bytes, page });
+function pushUndoState(bytes, page, pages = null) {
+    state.undoStack.push({ bytes, page, pages });
     if (state.undoStack.length > state.maxHistory) state.undoStack.shift();
     state.redoStack = [];
     updateUndoRedoButtons();
@@ -844,7 +866,7 @@ function pushUndoState(bytes, page) {
  * Aplica una modificación al documento: `mutator(doc)` recibe un PDFDocument de pdf-lib.
  * Si devuelve `false` no se registra ningún cambio; si devuelve otro PDFDocument, ese pasa a ser el documento.
  */
-async function editDocument(mutator, { newPage = null, undoFrom = null, silent = false } = {}) {
+async function editDocument(mutator, { newPage = null, undoFrom = null, silent = false, pages = [state.currentPage] } = {}) {
     const prevBytes = undoFrom ? undoFrom.bytes : state.pdfBytes;
     const prevPage = undoFrom ? undoFrom.page : state.currentPage;
     const doc = await loadLibDoc(state.pdfBytes);
@@ -853,33 +875,33 @@ async function editDocument(mutator, { newPage = null, undoFrom = null, silent =
     const outDoc = result instanceof PDFDocument ? result : doc;
     const newBytes = await outDoc.save();
 
-    pushUndoState(prevBytes, prevPage);
+    pushUndoState(prevBytes, prevPage, pages);
     state.pdfBytes = newBytes;
     if (newPage !== null) state.currentPage = newPage;
     // silent: la interfaz ya refleja el cambio (notas); sólo se actualiza el documento de pdf.js
     if (silent) await swapViewerDocQuietly();
-    else await reloadViewer();
+    else await reloadViewer({ thumbPages: pages });
     return true;
 }
 
 async function undoAction() {
     if (!state.undoStack.length || !hasDocument()) return;
-    state.redoStack.push({ bytes: state.pdfBytes, page: state.currentPage });
     const prev = state.undoStack.pop();
+    state.redoStack.push({ bytes: state.pdfBytes, page: state.currentPage, pages: prev.pages });
     state.pdfBytes = prev.bytes;
     state.currentPage = prev.page;
-    await reloadViewer();
+    await reloadViewer({ thumbPages: prev.pages });
     updateUndoRedoButtons();
     setModified(state.undoStack.length > 0);
 }
 
 async function redoAction() {
     if (!state.redoStack.length || !hasDocument()) return;
-    state.undoStack.push({ bytes: state.pdfBytes, page: state.currentPage });
     const next = state.redoStack.pop();
+    state.undoStack.push({ bytes: state.pdfBytes, page: state.currentPage, pages: next.pages });
     state.pdfBytes = next.bytes;
     state.currentPage = next.page;
-    await reloadViewer();
+    await reloadViewer({ thumbPages: next.pages });
     updateUndoRedoButtons();
     setModified(true);
 }
@@ -1114,7 +1136,8 @@ async function openGridView() {
     if (newOrder.join(',') !== originalOrder.join(',')) {
         const newTotal = newOrder.length;
         await editDocument(doc => reorderDocument(doc, newOrder), {
-            newPage: state.currentPage >= newTotal ? Math.max(0, newTotal - 1) : state.currentPage
+            newPage: state.currentPage >= newTotal ? Math.max(0, newTotal - 1) : state.currentPage,
+            pages: null
         });
         setModified(true);
     }
@@ -1357,7 +1380,7 @@ async function applyWatermarkToAllPages(signature) {
             const y0 = (mapper.height - height) / 2;
             drawImageInScreenRect(doc, page, embedded.ref, mapper, x0, y0, width, height);
         }
-    });
+    }, { pages: null });
     await msgInfo('Éxito', 'Marca de agua aplicada a todas las páginas.');
 }
 
@@ -1579,7 +1602,7 @@ async function beginTextAt(screenPt) {
     if (found) {
         // Se quita temporalmente la anotación para editarla; el historial apunta al estado previo.
         state.pdfBytes = await doc.save();
-        await reloadViewer();
+        await reloadViewer({ thumbPages: [state.currentPage] });
         const box = state.pageMapper.rectToScreen(found.rect);
         openTextEditor({
             x: box.x0, y: box.y0,
@@ -1732,12 +1755,12 @@ function commitTextEditor() {
 
     if (!text.trim()) {
         // Texto vacío: si era uno existente queda eliminado (se registra en el historial)
-        if (undoFrom) runTask(() => editDocument(() => {}, { undoFrom }));
+        if (undoFrom) runTask(() => editDocument(() => {}, { undoFrom, pages: [page] }));
         return;
     }
     runTask(() => editDocument(doc => addFreeTextAnnot(
         doc, doc.getPage(page), mapper, { x, y }, text, fontSize, color, style
-    ), { undoFrom }));
+    ), { undoFrom, pages: [page] }));
 }
 
 /** Descarta los cambios del editor (un texto existente vuelve a su estado original). */
@@ -1747,7 +1770,7 @@ function cancelTextEditor() {
     if (ed && ed.undoFrom) {
         runTask(async () => {
             state.pdfBytes = ed.undoFrom.bytes;
-            await reloadViewer();
+            await reloadViewer({ thumbPages: [ed.undoFrom.page] });
         });
     }
 }
@@ -2064,7 +2087,7 @@ function commitImageEditor() {
     const { bytes, type, x, y, w, h, page, mapper, undoFrom } = ed;
     runTask(() => editDocument(
         doc => addImageStampAnnot(doc, doc.getPage(page), mapper, { bytes, type }, x, y, w, h),
-        { undoFrom }
+        { undoFrom, pages: [page] }
     ));
 }
 
@@ -2076,7 +2099,7 @@ function cancelImageEditor() {
         showStatus('');
         runTask(async () => {
             state.pdfBytes = ed.undoFrom.bytes;
-            await reloadViewer();
+            await reloadViewer({ thumbPages: [ed.undoFrom.page] });
         });
     } else {
         showStatus('Imagen descartada.', 3000);
@@ -2088,7 +2111,7 @@ function deleteImageEditor() {
     const ed = closeImageEditor();
     if (!ed) return;
     showStatus('Imagen eliminada.', 3000);
-    if (ed.undoFrom) runTask(() => editDocument(() => {}, { undoFrom: ed.undoFrom }));
+    if (ed.undoFrom) runTask(() => editDocument(() => {}, { undoFrom: ed.undoFrom, pages: [ed.page] }));
 }
 
 /* Reedición de imágenes ya colocadas: clic sobre ellas en modo Navegar o Selección. */
@@ -2134,7 +2157,7 @@ async function beginImageEditAt(screenPt) {
     if (!found) return false;
 
     state.pdfBytes = await doc.save();
-    await reloadViewer();
+    await reloadViewer({ thumbPages: [state.currentPage] });
     let { bytes, type } = found;
     const delta = (((state.pageMapper.rotate - found.rotate) % 360) + 360) % 360;
     if (delta) {
@@ -3055,7 +3078,7 @@ function buildNoteEl(n) {
     head.querySelector('.pn-del').addEventListener('click', () => {
         noteUi.open.delete(n.id);
         el.remove();
-        runTask(() => editDocument(doc => deleteNoteAnnot(doc, doc.getPage(el._page), n.id), { silent: true }));
+        runTask(() => editDocument(doc => deleteNoteAnnot(doc, doc.getPage(el._page), n.id), { silent: true, pages: [el._page] }));
         runTask(async () => { await renderCurrentPage(); });
     });
     head.querySelectorAll('.pn-dot').forEach(dot => dot.addEventListener('click', () => {
@@ -3130,7 +3153,7 @@ function createNoteAt(screenPt) {
     const color = noteUi.color.slice();
     runTask(async () => {
         let id = null;
-        await editDocument(doc => { id = addNoteAnnot(doc, doc.getPage(page), mapper, pos, color, ''); }, { silent: true });
+        await editDocument(doc => { id = addNoteAnnot(doc, doc.getPage(page), mapper, pos, color, ''); }, { silent: true, pages: [page] });
         if (!id || page !== state.currentPage) return;
         noteUi.open.add(id);
         const el = buildNoteEl({ id, x: pos.x, y: pos.y, color, text: '' });
