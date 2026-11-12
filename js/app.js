@@ -396,21 +396,35 @@ async function loadNewDocument(files, fileHandle = null) {
     updateUndoRedoButtons();
     setModified(false);
     clearThumbList(); // documento nuevo: no se reutilizan las miniaturas del anterior
+    fitWidthOnNextLoad = true;
     await reloadViewer();
 }
 
-async function loadOrMergeDroppedFiles(files) {
+/* En celulares la hoja se abre al ancho de la pantalla (menos los márgenes), no con el zoom de escritorio */
+const MOBILE_QUERY = window.matchMedia('(max-width: 640px)');
+let fitWidthOnNextLoad = false;
+
+async function fitWidthZoom() {
+    const page = await state.pdfJsDoc.getPage(1);
+    const pageW = page.getViewport({ scale: 1 }).width;
+    const cs = getComputedStyle(ui.placeholder.parentElement);
+    const avail = ui.scrollArea.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    return avail > 0 && pageW > 0 ? avail / pageW : state.zoomFactor;
+}
+
+/** `atIndex`: posición elegida al soltar sobre el espacio naranja entre hojas (si no, después de la actual). */
+async function loadOrMergeDroppedFiles(files, atIndex = null) {
     try {
         if (!hasDocument()) {
             await loadNewDocument(files);
         } else {
-            const insertAt = state.currentPage + 1;
+            const insertAt = atIndex !== null ? atIndex : state.currentPage + 1;
             await editDocument(async doc => {
                 let offset = 0;
                 for (const file of files) {
                     offset += await insertFileIntoDoc(doc, file, insertAt + offset);
                 }
-            }, { pages: null });
+            }, { pages: null, newPage: atIndex !== null ? atIndex : null });
             setModified(true);
         }
     } catch (e) {
@@ -569,6 +583,11 @@ async function reloadViewer({ thumbPages = null } = {}) {
     state.totalPages = state.pdfJsDoc.numPages;
     if (state.currentPage >= state.totalPages) state.currentPage = Math.max(0, state.totalPages - 1);
     ui.spinPage.max = String(state.totalPages);
+
+    if (fitWidthOnNextLoad) {
+        fitWidthOnNextLoad = false;
+        if (MOBILE_QUERY.matches) state.zoomFactor = await fitWidthZoom();
+    }
 
     generateThumbnails(thumbPages);
     await renderCurrentPage();
@@ -1312,6 +1331,61 @@ function zoomOut() {
         state.zoomFactor -= 0.25;
         renderCurrentPage();
     }
+}
+
+/**
+ * Zoom con Ctrl + rueda: el punto de la hoja que está bajo el mouse queda fijo en pantalla.
+ * Las hojas se agrandan/achican al instante (antes de redibujarse) y se corrige el scroll,
+ * así la vista no salta a otra parte del documento.
+ */
+function zoomAtPointer(direction, clientX, clientY) {
+    commitTextEditor();
+    commitImageEditor();
+    const oldZoom = state.zoomFactor;
+    const newZoom = direction > 0 ? oldZoom + 0.25 : (oldZoom > 0.5 ? oldZoom - 0.25 : oldZoom);
+    if (newZoom === oldZoom) return;
+
+    const slots = Array.from(ui.placeholder.parentElement.querySelectorAll(':scope > .page-slot'));
+    if (!slots.length) {
+        state.zoomFactor = newZoom;
+        renderCurrentPage();
+        return;
+    }
+    // Hoja de referencia: la que está bajo el mouse (o la más cercana) y la posición relativa dentro de ella
+    const rects = slots.map(s => s.getBoundingClientRect());
+    let anchor = null;
+    let bestDist = Infinity;
+    rects.forEach((r, i) => {
+        const dist = clientY < r.top ? r.top - clientY : clientY > r.bottom ? clientY - r.bottom : 0;
+        if (dist < bestDist && r.width && r.height) {
+            bestDist = dist;
+            anchor = { slot: slots[i], fx: (clientX - r.left) / r.width, fy: (clientY - r.top) / r.height };
+        }
+    });
+
+    const ratio = newZoom / oldZoom;
+    state.zoomFactor = newZoom;
+    slots.forEach((slot, i) => {
+        if (slot.contains(ui.pageWrapper)) {
+            for (const c of [ui.pageCanvas, ui.overlay]) {
+                const w = parseFloat(c.style.width);
+                const h = parseFloat(c.style.height);
+                if (w && h) { c.style.width = `${w * ratio}px`; c.style.height = `${h * ratio}px`; }
+            }
+        } else {
+            setSlotSize(slot, rects[i].width * ratio, rects[i].height * ratio);
+        }
+    });
+
+    const keepAnchor = () => {
+        if (!anchor || !anchor.slot.isConnected) return;
+        const r = anchor.slot.getBoundingClientRect();
+        ui.scrollArea.scrollLeft += r.left + anchor.fx * r.width - clientX;
+        ui.scrollArea.scrollTop += r.top + anchor.fy * r.height - clientY;
+    };
+    keepAnchor();
+    // Al terminar de dibujar se corrige cualquier diferencia mínima de tamaño
+    renderCurrentPage().then(keepAnchor, () => {});
 }
 
 /* ---------- Modos, color y grosor ---------- */
@@ -2573,7 +2647,10 @@ async function getPageWords(pageIndex) {
                 dir,
                 along0: e * dir.x + f * dir.y + s0,
                 along1: e * dir.x + f * dir.y + s1,
-                across: e * up.x + f * up.y
+                across: e * up.x + f * up.y,
+                // Posición de la palabra dentro del texto del fragmento (para marcarla en la capa de texto)
+                c0: m.index,
+                c1: m.index + m[0].length
             });
         }
     }
@@ -2581,11 +2658,68 @@ async function getPageWords(pageIndex) {
     return words;
 }
 
+/**
+ * Palabra completa bajo un punto. Muchos PDF guardan una misma palabra en varios fragmentos
+ * (letra por letra o en partes, por el interletrado): se unen los trozos vecinos del mismo
+ * renglón que no tienen un espacio real entre sí. Devuelve los trozos en orden ([] si no hay).
+ */
+function findWordPiecesAt(words, pdfPt) {
+    const hit = words.find(w => rectContains(w, pdfPt));
+    if (!hit) return [];
+    const sameLine = w => Math.abs(w.dir.x - hit.dir.x) < 1e-3 && Math.abs(w.dir.y - hit.dir.y) < 1e-3 &&
+        Math.abs(w.across - hit.across) < 0.5 * Math.min(w.fontH, hit.fontH);
+    const line = words.filter(sameLine).sort((a, b) => a.along0 - b.along0);
+    let i0 = line.indexOf(hit);
+    let i1 = i0;
+    // Trozos de fragmentos distintos que casi se tocan forman la misma palabra
+    const joined = (a, b) => {
+        const gap = b.along0 - a.along1;
+        const h = Math.min(a.fontH, b.fontH);
+        return a.item !== b.item && gap <= 0.15 * h && gap >= -0.5 * h;
+    };
+    while (i0 > 0 && joined(line[i0 - 1], line[i0])) i0--;
+    while (i1 < line.length - 1 && joined(line[i1], line[i1 + 1])) i1++;
+    return line.slice(i0, i1 + 1);
+}
+
 async function getWordAtPoint(pdfPt) {
-    if (!hasDocument()) return '';
+    if (!hasDocument()) return { text: '', pieces: [] };
     const words = await getPageWords(state.currentPage);
-    const word = words.find(w => rectContains(w, pdfPt));
-    return word ? word.text : '';
+    const pieces = findWordPiecesAt(words, pdfPt);
+    return { text: pieces.map(w => w.text).join(''), pieces };
+}
+
+/** Marca en la capa de texto la palabra copiada (el navegador, solo, marcaría un único trozo). */
+function selectWordInTextLayer(pieces) {
+    const data = textLayerData;
+    if (!data || !pieces.length || !data.layer.isConnected) return;
+    const first = pieces[0];
+    const last = pieces[pieces.length - 1];
+    const divA = data.divs[first.item];
+    const divB = data.divs[last.item];
+    if (!divA || !divB) return;
+    const pointAt = (div, charOffset) => {
+        const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT);
+        let n = 0;
+        let lastNode = null;
+        for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+            if (charOffset <= n + t.length) return [t, charOffset - n];
+            n += t.length;
+            lastNode = t;
+        }
+        return lastNode ? [lastNode, lastNode.length] : null;
+    };
+    const a = pointAt(divA, first.c0);
+    const b = pointAt(divB, last.c1);
+    if (!a || !b) return;
+    try {
+        const range = document.createRange();
+        range.setStart(a[0], a[1]);
+        range.setEnd(b[0], b[1]);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+    } catch (_) { /* la capa se volvió a dibujar mientras tanto */ }
 }
 
 /** Une las líneas de texto: quita guiones de corte de palabra y descarta líneas vacías. */
@@ -3148,8 +3282,9 @@ function onPageDoubleClick(e) {
         return;
     }
     runTask(async () => {
-        const wordText = await getWordAtPoint(pdfPt);
+        const { text: wordText, pieces } = await getWordAtPoint(pdfPt);
         if (wordText) {
+            selectWordInTextLayer(pieces);
             await copyToClipboard(wordText);
             showStatus(`Palabra copiada al doble clic: "${wordText}"`, 6000, 'check-circle');
             startDragTextOperation(wordText, clientX, clientY);
@@ -3166,6 +3301,8 @@ function initUi() {
     initSearch();
     initNotes();
     ui.btnOpen.addEventListener('click', openFileOrImage);
+    // Clic en el recuadro "Arrastra un PDF/Imagen aquí": abre el selector de archivos
+    ui.placeholder.addEventListener('click', openFileOrImage);
     $('btn-new-tab').addEventListener('click', openNewReaderTab);
     ui.btnSave.addEventListener('click', () => runTask(savePdf));
     ui.btnSaveAs.addEventListener('click', () => runTask(savePdfAs));
@@ -3286,8 +3423,7 @@ function initUi() {
     ui.scrollArea.addEventListener('wheel', e => {
         if (e.ctrlKey && hasDocument()) {
             e.preventDefault();
-            if (e.deltaY < 0) zoomIn();
-            else if (e.deltaY > 0) zoomOut();
+            if (e.deltaY) zoomAtPointer(e.deltaY < 0 ? 1 : -1, e.clientX, e.clientY);
         }
     }, { passive: false });
 
@@ -3296,14 +3432,17 @@ function initUi() {
         if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
             e.preventDefault();
             e.dataTransfer.dropEffect = 'copy';
+            updatePageDropGap(e);
         }
     });
     window.addEventListener('drop', e => {
         if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
         e.preventDefault();
+        const atIndex = pageDropGap.el ? pageDropGap.index : null;
+        hidePageDropGap(true);
         if (isAnyDialogOpen()) return;
         const validFiles = filterValidFiles(e.dataTransfer.files);
-        if (validFiles.length) runTask(() => loadOrMergeDroppedFiles(validFiles));
+        if (validFiles.length) runTask(() => loadOrMergeDroppedFiles(validFiles, atIndex));
     });
 
     // Cambios sin guardar al cerrar (closeEvent)
@@ -3315,6 +3454,89 @@ function initUi() {
     });
 
     setupShortcuts();
+}
+
+/* ---------- Soltar un PDF entre hojas (espacio naranja "Unir a partir de esta hoja") ----------
+   Sólo aparece mientras se sostiene un PDF/imagen sobre las hojas del documento abierto. */
+
+const pageDropGap = { el: null, index: -1, timer: null };
+
+/** ¿Lo que se arrastra incluye algún PDF o imagen? (si el navegador no informa el tipo, se acepta) */
+function dragHasValidFile(dt) {
+    const items = Array.from(dt.items || []).filter(it => it.kind === 'file');
+    if (!items.length) return true;
+    return items.some(it => !it.type || it.type === 'application/pdf' || it.type.startsWith('image/'));
+}
+
+/** Posición donde quedaría lo que se suelta: antes de la hoja si el mouse está en su mitad superior. */
+function pageDropIndexAt(slots, clientY) {
+    const gapH = pageDropGap.el ? pageDropGap.el.getBoundingClientRect().height + 20 : 0;
+    for (let i = 0; i < slots.length; i++) {
+        const r = slots[i].getBoundingClientRect();
+        // Se descuenta el espacio abierto para que no "empuje" el cálculo de las hojas siguientes
+        const shift = pageDropGap.el && pageDropGap.index <= i ? gapH : 0;
+        if (clientY < r.top - shift + r.height / 2) return i;
+    }
+    return slots.length;
+}
+
+function updatePageDropGap(e) {
+    const container = ui.placeholder.parentElement;
+    const slots = Array.from(container.querySelectorAll(':scope > .page-slot'));
+    const over = e.target instanceof Element && ui.scrollArea.contains(e.target);
+    if (!hasDocument() || !slots.length || !over || isAnyDialogOpen() || !dragHasValidFile(e.dataTransfer)) {
+        hidePageDropGap();
+        return;
+    }
+    clearTimeout(pageDropGap.timer);
+    pageDropGap.timer = setTimeout(() => hidePageDropGap(), 150); // se cierra si se deja de arrastrar encima
+
+    const index = pageDropIndexAt(slots, e.clientY);
+    if (pageDropGap.el && index === pageDropGap.index) return;
+
+    let el = pageDropGap.el;
+    const isNew = !el;
+    if (isNew) {
+        el = document.createElement('div');
+        el.className = 'page-drop-gap';
+        el.innerHTML = `<span class="page-drop-label">${icon('plus-circle')} Unir a partir de esta hoja <b></b></span>`;
+        pageDropGap.el = el;
+    }
+    pageDropGap.index = index;
+    el.querySelector('b').textContent = `(hoja ${index + 1})`;
+    const neighbor = slots[Math.min(index, slots.length - 1)];
+    el.style.width = `${Math.max(240, neighbor.getBoundingClientRect().width)}px`;
+    if (index < slots.length) container.insertBefore(el, slots[index]);
+    else slots[slots.length - 1].after(el);
+
+    // El espacio sólo se muestra si el borde de la hoja está a la vista (o casi): con zoom grande y el
+    // mouse en medio de una hoja no aparece nada (así no salta la vista). Si está apenas afuera, se acerca.
+    const GAP_H = 72;
+    const NEAR = 140;
+    const area = ui.scrollArea.getBoundingClientRect();
+    const gapTop = el.getBoundingClientRect().top;
+    if (gapTop < area.top - NEAR || gapTop > area.bottom + NEAR) {
+        hidePageDropGap(true);
+        return;
+    }
+    if (gapTop < area.top + 8) ui.scrollArea.scrollTop -= area.top + 8 - gapTop;
+    // abajo se deja lugar para la paginación flotante, que si no taparía el cartel
+    else if (gapTop + GAP_H > area.bottom - 84) ui.scrollArea.scrollTop += gapTop + GAP_H - (area.bottom - 84);
+
+    gsap.killTweensOf(el);
+    if (isNew) gsap.fromTo(el, { height: 0, autoAlpha: 0 }, { height: 72, autoAlpha: 1, duration: 0.25, ease: 'power2.out' });
+    else gsap.fromTo(el, { scale: 0.97 }, { scale: 1, duration: 0.2, ease: 'power2.out', clearProps: 'scale' });
+}
+
+function hidePageDropGap(immediate = false) {
+    clearTimeout(pageDropGap.timer);
+    const el = pageDropGap.el;
+    if (!el) return;
+    pageDropGap.el = null;
+    pageDropGap.index = -1;
+    gsap.killTweensOf(el);
+    if (immediate) { el.remove(); return; }
+    gsap.to(el, { height: 0, autoAlpha: 0, duration: 0.18, ease: 'power1.in', onComplete: () => el.remove() });
 }
 
 /* ---------- Notas flotantes (post-it) ---------- */

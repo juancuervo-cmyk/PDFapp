@@ -150,7 +150,11 @@
     // Posición del botón abrir/cerrar: arriba a la derecha del panel, o centrado en la franja si está cerrado
     const thumbToggleLeftFor = w => 9 + w - 34;
     const THUMB_TOGGLE_LEFT_CLOSED = 9 + (THUMB_COLLAPSED_WIDTH - 28) / 2;
-    let thumbsOpen = true;
+    // Al iniciar el panel está cerrado: se abre sólo cuando el usuario toca el botón
+    let thumbsOpen = false;
+    thumbList.classList.add('collapsed');
+    editTools.style.left = `${EDIT_TOOLS_LEFT_NO_THUMBS}px`;
+    btnThumbToggle.style.left = `${THUMB_TOGGLE_LEFT_CLOSED}px`;
 
     let thumbWidth = THUMB_DEFAULT_WIDTH;
     try {
@@ -383,4 +387,23 @@
         if (!e.target.closest('.tool-group')) closeFlyouts();
     });
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeFlyouts(); });
+
+    /* ---------- Ojo: mostrar / ocultar los menús flotantes ---------- */
+
+    const btnFloating = document.getElementById('btn-toggle-floating');
+    const floatingMenus = ['edit-tools', 'side-tools', 'page-nav']
+        .map(id => document.getElementById(id))
+        .filter(Boolean);
+
+    function setFloatingVisible(show) {
+        btnFloating.setAttribute('aria-pressed', String(show));
+        btnFloating.title = show ? 'Ocultar los menús flotantes' : 'Mostrar los menús flotantes';
+        if (typeof icon === 'function') btnFloating.innerHTML = icon(show ? 'eye' : 'eye-slash');
+        document.body.classList.toggle('floating-hidden', !show);
+        if (!show) closeFlyouts(false);
+        gsap.killTweensOf(floatingMenus, 'opacity,visibility');
+        gsap.to(floatingMenus, { autoAlpha: show ? 1 : 0, duration: show ? 0.22 : 0.16, ease: show ? 'power2.out' : 'power1.in' });
+    }
+
+    btnFloating.addEventListener('click', () => setFloatingVisible(btnFloating.getAttribute('aria-pressed') !== 'true'));
 })();

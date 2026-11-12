@@ -399,6 +399,11 @@ button.default:hover:not(:disabled) {
 
 .menu-panel button .ph-icon { color: var(--muted); transition: color 0.2s ease; }
 
+/* Ícono de cada opción: siempre a la derecha del texto (la tilde y la flecha de submenú, al borde) */
+.menu-panel button > .ph-icon { order: 1; }
+.menu-panel button > .menu-check,
+.menu-panel button > .ph-icon[data-icon-name="caret-right"] { order: 2; }
+
 .menu-panel button:hover:not(:disabled) {
     color: var(--text);
     background-color: var(--hover);
@@ -418,7 +423,7 @@ button.default:hover:not(:disabled) {
 
 .menu-sub { position: relative; }
 
-.menu-sub-trigger .ph-icon:last-child { margin-left: auto; width: 12px; height: 12px; }
+.menu-sub-trigger .ph-icon[data-icon-name="caret-right"] { margin-left: auto; width: 12px; height: 12px; }
 
 .menu-sub.open > .menu-sub-trigger {
     color: var(--text);
@@ -1187,6 +1192,34 @@ body.files-over #page-placeholder {
     background-color: var(--accent-soft);
     box-shadow: 0 0 0 6px var(--accent-soft), 0 20px 50px -18px var(--glow);
 }
+
+/* Espacio naranja entre hojas al sostener un PDF sobre el documento abierto (app.js) */
+.page-drop-gap {
+    flex: none;
+    height: 72px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    color: var(--accent-text);
+    background-color: var(--accent-soft-2);
+    border: 2px dashed var(--accent);
+    border-radius: var(--r-lg);
+    box-shadow: 0 0 0 4px var(--accent-soft), 0 12px 30px -14px var(--glow);
+    pointer-events: none;
+}
+
+.page-drop-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.page-drop-label b { font-weight: 500; opacity: 0.8; }
+.page-drop-label .ph-icon { width: 20px; height: 20px; }
 
 #page-container:has(.page-slot) {
     flex-direction: column;
@@ -2425,3 +2458,45 @@ button.merge-empty.split-empty {
 }
 .merge-thumb img { max-width: 100%; max-height: 100%; background: #fff; box-shadow: var(--shadow-md); border-radius: 3px; }
 .merge-buttons button[hidden] { display: none; }
+
+/* ---------- Logo reducido, ojo de menús flotantes y recuadro clickeable ---------- */
+
+.brand-mark { display: none; }
+
+#page-placeholder { cursor: pointer; }
+
+#btn-toggle-floating { padding: 7px 9px; }
+#btn-toggle-floating .ph-icon { width: 18px; height: 18px; }
+#btn-toggle-floating[aria-pressed="false"] { color: var(--accent-text); background-color: var(--accent-soft); }
+
+/* ---------- Celulares ---------- */
+
+@media (max-width: 640px) {
+    /* Barra superior: logo sólo del cuervo y Archivo / Vistas / Cuadrícula / QR en una línea;
+       el buscador y el ojo pasan a la segunda línea */
+    #top-bar { gap: 0; row-gap: 6px; padding: 6px 6px; }
+    .brand { margin-right: 2px; padding-right: 5px; }
+    .brand-svg:not(.brand-mark) { display: none; }
+    .brand-mark { display: block; height: 22px; }
+    .toolbar > button,
+    .menu-trigger { padding: 6px 7px; gap: 4px; font-size: 13.5px; }
+    .menu-trigger .ph-icon { display: none; }
+    .lbl-desktop { display: none; }
+    .search-box { order: 10; flex: 1 1 200px; min-width: 0; margin-left: 0; }
+    .search-box input { width: auto; min-width: 0; flex: 1 1 auto; }
+    #btn-toggle-floating { order: 11; }
+
+    /* Sin panel de miniaturas: toda la pantalla es para la hoja */
+    #thumbnail-list,
+    #thumb-resizer,
+    #btn-thumb-toggle,
+    #btn-thumbnail-view { display: none !important; }
+    #main { padding: 6px; }
+    #edit-tools { left: 10px !important; }
+    #page-container { padding: 12px; }
+
+    #page-placeholder { max-width: calc(100vw - 60px); padding: 32px 20px 28px; }
+
+    /* Sin barra de estado abajo */
+    #status-bar { display: none; }
+}
