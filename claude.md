@@ -4,6 +4,15 @@ este archivo no lo vas a modificar, solo se usó a modo de referencia inicial.
 
 todos los cambios ahora se van a trabajar sobre el html, css y js y no vas a actualizar el py
 
+PREMISA PRINCIPAL — OPTIMIZACIÓN:
+- es importantísimo que todo el programa de cuervo.pdf esté completamente optimizado. lo que lo diferencia del resto es su rapidez de carga y de respuesta, por lo que es indispensable que esto se mantenga en cada cambio.
+- a la vez queremos que sea más completo que otros. por eso, si te pedimos algo que ves que va a aumentar significativamente el peso o la carga general del programa (librerías nuevas, archivos pesados, procesos lentos, más requests, etc.), AVISANOS antes de implementarlo para que tomemos esa decisión con seguridad.
+- si no impacta significativamente, buscá siempre la manera más optimizada de aplicar lo que te pedimos.
+
+LECTOR DE QR — NO TOCAR:
+- cuando se hagan cambios, no toques la función del lector de QR (Validar QR: toggleQrTool, readQrInRegion, validateQrInRect, la carga de zxing/jsQR y el modo 'qr' en los eventos del canvas). suele pasar que al pedir otros cambios el QR deja de funcionar en ciertos momentos.
+- si un cambio pedido obliga a tocar algo que el QR usa (setMode, eventos del overlay, loadScript, etc.), avisá antes y verificá después que Validar QR siga funcionando.
+
 no hagas cambios sobre funcionalidades que no sean las que te pedí explicitamente. si algo no es compatible con el resto de las funciones me avisas y yo te digo cómo seguir.
 
 para iconos utilizaremos siempre los cargados en C:\Users\agost\OneDrive\Escritorio\prueba pa no pyton\phosphor-icons (1)\SVGs\regular

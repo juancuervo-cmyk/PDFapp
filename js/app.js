@@ -13,6 +13,7 @@ const ZXING_URL = 'https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.4/dist/iife/reade
 
 const JSZIP_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
 const JSQR_URL = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+const CAMERA_JS_URL = 'js/camera.js'; // "Sacar foto": se baja sólo al usarla
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}pdf.worker.min.js`;
 
@@ -110,6 +111,8 @@ const ui = {
     textFormatBar: $('text-format-bar'),
     fileOpen: $('file-open'),
     fileImages: $('file-images'),
+    fileCamera: $('file-camera'),
+    btnCamera: $('btn-camera'),
     printArea: $('print-area')
 };
 
@@ -489,6 +492,24 @@ async function openFileOrImage() {
     }
     ui.fileOpen.value = '';
     ui.fileOpen.click();
+}
+
+/** Sacar foto (celulares): abre la cámara nativa; el módulo de vista previa se baja mientras tanto. */
+function takePhoto() {
+    if (isAnyDialogOpen()) return;
+    loadScript(CAMERA_JS_URL).catch(e => console.warn(e));
+    ui.fileCamera.value = '';
+    ui.fileCamera.click();
+}
+
+/** Vista previa con filtro "Escaneado" y alta como página (después de la actual, o documento nuevo). */
+async function addCameraPhoto(file) {
+    await loadScript(CAMERA_JS_URL);
+    document.body.classList.remove('busy'); // con la vista previa abierta no hay proceso en curso
+    const blob = await scanPhotoDialog(file);
+    document.body.classList.add('busy');
+    if (!blob) return;
+    await loadOrMergeDroppedFiles([new File([blob], 'Foto.jpg', { type: 'image/jpeg' })]);
 }
 
 function insertImageAsPage() {
@@ -3301,6 +3322,11 @@ function initUi() {
     initSearch();
     initNotes();
     ui.btnOpen.addEventListener('click', openFileOrImage);
+    ui.btnCamera.addEventListener('click', takePhoto);
+    ui.fileCamera.addEventListener('change', () => {
+        const file = ui.fileCamera.files[0];
+        if (file) runTask(() => addCameraPhoto(file));
+    });
     // Clic en el recuadro "Arrastra un PDF/Imagen aquí": abre el selector de archivos
     ui.placeholder.addEventListener('click', openFileOrImage);
     $('btn-new-tab').addEventListener('click', openNewReaderTab);

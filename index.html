@@ -61,6 +61,7 @@
                 <button class="menu-trigger" aria-haspopup="true" aria-expanded="false">Archivo <i data-icon="caret-down"></i></button>
                 <div class="menu-panel" role="menu" hidden>
                     <button id="btn-open" role="menuitem" title="Abrir PDF o imagen(es) (Ctrl+O)"><i data-icon="folder-open"></i> Abrir</button>
+                    <button id="btn-camera" class="mobile-only" role="menuitem" title="Sacar una foto con la cámara y agregarla como página (con filtro Escaneado)"><i data-icon="camera"></i> Sacar foto</button>
                     <button id="btn-new-tab" role="menuitem" title="Abrir una nueva pestaña del lector (Ctrl+D)"><i data-icon="file-plus"></i> Nueva pestaña</button>
                     <button id="btn-save" role="menuitem" title="Guardar cambios en el mismo archivo (Ctrl+S)" disabled><i data-icon="floppy-disk"></i> Guardar</button>
                     <button id="btn-save-as" role="menuitem" title="Guardar con otro nombre o ubicación (Ctrl+Mayús+S)" disabled><i data-icon="floppy-disk-back"></i> Guardar como</button>
@@ -217,6 +218,9 @@
            accept=".pdf,.png,.jpg,.jpeg,.bmp,.webp,.tiff,.tif,application/pdf,image/png,image/jpeg,image/bmp,image/webp,image/tiff">
     <input type="file" id="file-images" multiple hidden
            accept=".png,.jpg,.jpeg,.bmp,.webp,.tiff,.tif,image/png,image/jpeg,image/bmp,image/webp,image/tiff">
+
+    <!-- Sacar foto (celulares): abre la cámara nativa del teléfono -->
+    <input type="file" id="file-camera" hidden accept="image/*" capture="environment">
 
     <!-- Contenido que se envía a la impresora -->
     <div id="print-area"></div>
