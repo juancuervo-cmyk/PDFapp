@@ -244,8 +244,9 @@ function scanFilter(src) {
     const d = img.data;
     const g = grayOf(d, w * h);
 
-    // Brillo del papel: máximo por bloques de B×B, dilatado y suavizado, en baja resolución
-    const B = 8;
+    // Brillo del papel: máximo por bloques de B×B, dilatado y suavizado, en baja resolución.
+    // B es proporcional al tamaño (8 px a 2400 px) para que la vista previa chica se vea igual.
+    const B = Math.max(2, Math.round(Math.max(w, h) / 300));
     const sw = Math.ceil(w / B), sh = Math.ceil(h / B);
     const blk = new Float32Array(sw * sh);
     for (let y = 0; y < h; y++) {
@@ -307,20 +308,56 @@ function scanFilter(src) {
     return out;
 }
 
-/* ---------- Vista previa con esquinas arrastrables ---------- */
+/* ---------- Pantalla de la foto: resultado arriba, esquinas abajo ---------- */
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const PREVIEW_MAX_SIDE = 640; // la vista previa en vivo trabaja sobre una copia chica (rápida al arrastrar)
+
+/** Ajusta el tamaño en pantalla de `el` (proporción cw:ch) para que entre en `box`. */
+function fitInto(el, box, cw, ch, pad = 0) {
+    const s = Math.min((box.clientWidth - pad) / cw, (box.clientHeight - pad) / ch);
+    el.style.width = `${Math.max(1, Math.floor(cw * s))}px`;
+    el.style.height = `${Math.max(1, Math.floor(ch * s))}px`;
+}
+
+function downscale(src, maxSide) {
+    const s = Math.min(1, maxSide / Math.max(src.width, src.height));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(src.width * s));
+    c.height = Math.max(1, Math.round(src.height * s));
+    const cx = c.getContext('2d');
+    cx.imageSmoothingQuality = 'high';
+    cx.drawImage(src, 0, 0, c.width, c.height);
+    return c;
+}
+
+/** PDF de una sola hoja A4 con la imagen (JPEG) ajustada. */
+async function jpegToPdfFile(blob, name) {
+    const doc = await PDFDocument.create();
+    await insertImageAsA4Page(doc, { bytes: new Uint8Array(await blob.arrayBuffer()), type: 'jpg' }, 0);
+    return new File([await doc.save()], name, { type: 'application/pdf' });
+}
+
+function scanFileName() {
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    return `Escaneo ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}.${p(d.getMinutes())}.pdf`;
+}
 
 /**
- * Muestra la vista previa: esquinas de la hoja arrastrables + Original / Escaneado.
- * Devuelve un Blob JPEG (hoja recortada y enderezada) o null si se cancela.
+ * Pantalla única de la foto:
+ *  - arriba, el resultado (hoja recortada y enderezada) que se actualiza en vivo;
+ *  - abajo, la foto con las 4 esquinas arrastrables;
+ *  - Original / Escaneado, Compartir (PDF de una hoja), Cancelar y Agregar al PDF.
+ * Devuelve un Blob JPEG para agregar al documento, o null si se cancela.
  */
 async function scanPhotoDialog(file) {
     const original = await photoToCanvas(file);
     const W = original.width, H = original.height;
+    const small = downscale(original, PREVIEW_MAX_SIDE);
+    const ks = small.width / W;
     const detected = detectSheet(original);
-    let quad = (detected || fullQuad(W, H)).map(p => p.slice());
-    let scanned = null;
+    const FULL = fullQuad(W, H);
+    let quad = (detected || FULL).map(p => p.slice());
 
     return new Promise(resolve => {
         const { dlg, body, footer } = createDialog('Sacar foto', { className: 'scan-dialog' });
@@ -329,15 +366,21 @@ async function scanPhotoDialog(file) {
                 <label><input type="radio" name="scan-mode" value="original" checked> Original</label>
                 <label><input type="radio" name="scan-mode" value="scan"> Escaneado</label>
             </div>
-            <div class="scan-preview"><div class="scan-stage"></div></div>
+            <div class="scan-result"><canvas></canvas></div>
+            <div class="scan-edit"><div class="scan-stage"></div></div>
             <div class="scan-hint">
-                <span>Arrastrá los puntos a las esquinas de la hoja.</span>
+                <span class="scan-msg">Arrastrá los puntos a las esquinas de la hoja.</span>
                 <button type="button" class="scan-full"></button>
             </div>
         `;
+        const resultBox = body.querySelector('.scan-result');
+        const resultCanvas = resultBox.querySelector('canvas');
+        const editBox = body.querySelector('.scan-edit');
         const stage = body.querySelector('.scan-stage');
         const fullBtn = body.querySelector('.scan-full');
+        const msg = body.querySelector('.scan-msg');
         const mode = () => body.querySelector('input[name="scan-mode"]:checked').value;
+        const isFull = () => quad.every((p, i) => Math.abs(p[0] - FULL[i][0]) < 1 && Math.abs(p[1] - FULL[i][1]) < 1);
 
         // Capa SVG en coordenadas de la foto: sombra fuera de la hoja, borde y 4 puntos
         const svg = document.createElementNS(SVG_NS, 'svg');
@@ -359,12 +402,30 @@ async function scanPhotoDialog(file) {
             svg.append(dot, hit);
             return { hit, dot };
         });
+        stage.append(original, svg);
 
-        const pxPerUnit = () => W / Math.max(1, svg.getBoundingClientRect().width);
+        /* Resultado en vivo (sobre la copia chica, a lo sumo una vez por cuadro) */
+        let previewQueued = false;
+        const renderPreview = () => {
+            previewQueued = false;
+            if (done) return;
+            let c = warpSheet(small, quad.map(([x, y]) => [x * ks, y * ks]));
+            if (mode() === 'scan') c = scanFilter(c);
+            resultCanvas.width = c.width;
+            resultCanvas.height = c.height;
+            resultCanvas.getContext('2d').drawImage(c, 0, 0);
+            fitInto(resultCanvas, resultBox, c.width, c.height, 16);
+        };
+        const queuePreview = () => {
+            if (previewQueued) return;
+            previewQueued = true;
+            requestAnimationFrame(renderPreview);
+        };
+
         const draw = () => {
-            const k = pxPerUnit();
-            const pts = quad.map(p => p.join(',')).join(' ');
-            edge.setAttribute('points', pts);
+            fitInto(stage, editBox, W, H);
+            const k = W / Math.max(1, stage.clientWidth);
+            edge.setAttribute('points', quad.map(p => p.join(',')).join(' '));
             edge.style.strokeWidth = 2 * k;
             shade.setAttribute('d', `M0 0H${W}V${H}H0Z M${quad.map(p => p.join(' ')).join(' L')}Z`);
             handles.forEach(({ hit, dot }, i) => {
@@ -376,9 +437,9 @@ async function scanPhotoDialog(file) {
                 dot.setAttribute('r', 9 * k);
                 dot.style.strokeWidth = 2.5 * k;
             });
-            const isFull = quad.every((p, i) => p[0] === fullQuad(W, H)[i][0] && p[1] === fullQuad(W, H)[i][1]);
-            fullBtn.textContent = isFull && detected ? 'Detectar hoja' : 'Toda la foto';
-            fullBtn.hidden = isFull && !detected;
+            fullBtn.textContent = isFull() && detected ? 'Detectar hoja' : 'Toda la foto';
+            fullBtn.hidden = isFull() && !detected;
+            queuePreview();
         };
 
         let dragging = null;
@@ -402,17 +463,22 @@ async function scanPhotoDialog(file) {
         svg.addEventListener('pointercancel', endDrag);
 
         fullBtn.addEventListener('click', () => {
-            const toDetected = fullBtn.textContent === 'Detectar hoja';
-            quad = (toDetected ? detected : fullQuad(W, H)).map(p => p.slice());
+            quad = (fullBtn.textContent === 'Detectar hoja' ? detected : FULL).map(p => p.slice());
             draw();
         });
+        body.querySelectorAll('input[name="scan-mode"]').forEach(r => r.addEventListener('change', queuePreview));
 
-        const show = () => {
-            if (mode() === 'scan' && !scanned) scanned = scanFilter(original);
-            stage.replaceChildren(mode() === 'scan' ? scanned : original, svg);
-            draw();
+        /* Imagen final en alta resolución (se reutiliza si no cambió nada entre Compartir y Agregar) */
+        let cache = null;
+        const finalBlob = () => {
+            const key = mode() + quad.join(';');
+            if (cache && cache.key === key) return cache.blob;
+            let canvas = isFull() ? original : warpSheet(original, quad);
+            if (mode() === 'scan') canvas = scanFilter(canvas); // sobre la hoja ya recortada
+            const blob = new Promise((res, rej) => canvas.toBlob(b => (b ? res(b) : rej(new Error('No se pudo generar la imagen.'))), 'image/jpeg', SCAN_JPEG_QUALITY));
+            cache = { key, blob, pdf: null };
+            return blob;
         };
-        body.querySelectorAll('input[name="scan-mode"]').forEach(r => r.addEventListener('change', show));
 
         let done = false;
         const finish = value => {
@@ -422,19 +488,51 @@ async function scanPhotoDialog(file) {
             closeDialog(dlg);
             resolve(value);
         };
-        addDialogButton(footer, 'Agregar al PDF', () => {
-            const isFull = quad.every((p, i) => Math.abs(p[0] - fullQuad(W, H)[i][0]) < 1 && Math.abs(p[1] - fullQuad(W, H)[i][1]) < 1);
-            let canvas = isFull ? original : warpSheet(original, quad);
-            // El filtro se aplica sobre la hoja ya recortada (sin la mesa alrededor)
-            if (mode() === 'scan') canvas = isFull ? (scanned || scanFilter(original)) : scanFilter(canvas);
-            canvas.toBlob(blob => finish(blob), 'image/jpeg', SCAN_JPEG_QUALITY);
-        }, { isDefault: true });
+
+        /* Compartir: PDF de una sola hoja por el menú de compartir del celular */
+        const shareBtn = addDialogButton(footer, '', async () => {
+            shareBtn.disabled = true;
+            try {
+                const entry = (finalBlob(), cache); // la entrada de la imagen actual
+                const blob = await entry.blob;
+                if (!entry.pdf) entry.pdf = jpegToPdfFile(blob, scanFileName());
+                const pdf = await entry.pdf;
+                if (navigator.canShare && navigator.canShare({ files: [pdf] })) {
+                    try {
+                        await navigator.share({ files: [pdf], title: pdf.name });
+                    } catch (e) {
+                        // Si armar el PDF tardó, el navegador puede pedir otro toque: ya queda listo
+                        if (e.name === 'NotAllowedError') msg.textContent = 'El PDF ya está listo: tocá Compartir de nuevo.';
+                        else if (e.name !== 'AbortError') throw e;
+                    }
+                } else {
+                    downloadBlob(pdf, pdf.name); // sin menú de compartir (p. ej. en la compu): se descarga
+                }
+            } catch (e) {
+                console.error(e);
+                msg.textContent = `No se pudo compartir: ${e.message || e}`;
+            } finally {
+                shareBtn.disabled = false;
+            }
+        });
+        shareBtn.classList.add('scan-share');
+        shareBtn.title = 'Compartir como PDF (WhatsApp, mail…)';
+        shareBtn.setAttribute('aria-label', 'Compartir como PDF');
+        shareBtn.innerHTML = icon('share-network');
+
         addDialogButton(footer, 'Cancelar', () => finish(null));
+        addDialogButton(footer, 'Agregar al PDF', async () => {
+            try {
+                finish(await finalBlob());
+            } catch (e) {
+                console.error(e);
+                msg.textContent = `No se pudo generar la imagen: ${e.message || e}`;
+            }
+        }, { isDefault: true });
         dlg.addEventListener('cancel', e => { e.preventDefault(); finish(null); });
         window.addEventListener('resize', draw);
 
-        stage.replaceChildren(original, svg);
         dlg.showModal();
-        draw(); // con el diálogo ya visible, para medir el tamaño en pantalla
+        draw(); // con el diálogo ya visible, para medir el espacio disponible
     });
 }
