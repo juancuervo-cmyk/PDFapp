@@ -2465,8 +2465,15 @@ button.merge-empty.split-empty {
 
 #page-placeholder { cursor: pointer; }
 
-#btn-toggle-floating { padding: 7px 9px; }
-#btn-toggle-floating .ph-icon { width: 18px; height: 18px; }
+#btn-toggle-floating,
+#btn-theme { padding: 7px 9px; }
+#btn-toggle-floating .ph-icon,
+#btn-theme .ph-icon { width: 18px; height: 18px; }
+
+/* El menú Vista existe sólo en celulares (en la compu están Cuadrícula y el botón de miniaturas) */
+@media (min-width: 641px) {
+    #menu-view { display: none; }
+}
 #btn-toggle-floating[aria-pressed="false"] { color: var(--accent-text); background-color: var(--accent-soft); }
 
 /* ---------- Celulares ---------- */
@@ -2485,14 +2492,25 @@ button.merge-empty.split-empty {
     .search-box { order: 10; flex: 1 1 200px; min-width: 0; margin-left: 0; }
     .search-box input { width: auto; min-width: 0; flex: 1 1 auto; }
     #btn-toggle-floating { order: 11; }
+    #btn-theme { order: 12; }
 
-    /* Sin panel de miniaturas: toda la pantalla es para la hoja */
-    #thumbnail-list,
+    /* Cuadrícula va dentro del menú Vista */
+    #btn-grid-view { display: none; }
+
+    /* Miniaturas: se abren desde Vista > Miniaturas; cerradas no ocupan lugar.
+       Abiertas, la hoja se angosta (app.js la reajusta al ancho que queda) */
+    #thumbnail-list.collapsed,
     #thumb-resizer,
-    #btn-thumb-toggle,
-    #btn-thumbnail-view { display: none !important; }
+    #btn-thumb-toggle { display: none !important; }
+    #thumbnail-list { padding-top: 6px; }
     #main { padding: 6px; }
     #edit-tools { left: 10px !important; }
+    body.thumbs-open #edit-tools { left: calc(var(--thumb-w) + 18px) !important; }
+
+    /* Sin zoom de toda la app con los dedos (iOS ignora user-scalable=no) */
+    html, body { touch-action: pan-x pan-y; }
+    /* Con una herramienta de edición elegida, 1 dedo usa la herramienta y 2 dedos desplazan / hacen zoom */
+    #scroll-area:has(#overlay-canvas:not([data-mode="navigate"])) { touch-action: none; }
     #page-container { padding: 12px; }
 
     #page-placeholder { max-width: calc(100vw - 60px); padding: 32px 20px 28px; }

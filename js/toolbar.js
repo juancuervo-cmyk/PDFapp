@@ -1,6 +1,6 @@
 /**
  * toolbar.js
- * Desplegables de la barra superior (Archivo / Vistas) y menú vertical
+ * Desplegables de la barra superior (Archivo / Vista en celulares) y menú vertical
  * flotante arrastrable. Animaciones con GSAP.
  */
 (function () {
@@ -131,7 +131,7 @@
         });
     }
 
-    /* ---------- Vistas > Miniatura (mostrar / ocultar la lista de miniaturas) ---------- */
+    /* ---------- Miniaturas (botón de la izquierda; en celulares Vista > Miniaturas) (mostrar / ocultar la lista de miniaturas) ---------- */
 
     const btnThumbView = document.getElementById('btn-thumbnail-view');
     const thumbList = document.getElementById('thumbnail-list');
@@ -162,8 +162,8 @@
         if (saved >= THUMB_MIN_WIDTH && saved <= THUMB_MAX_WIDTH) thumbWidth = saved;
     } catch (_) { /* sin almacenamiento: ancho por defecto */ }
 
-    function applyThumbWidth(w) {
-        thumbWidth = Math.round(Math.min(THUMB_MAX_WIDTH, Math.max(THUMB_MIN_WIDTH, w)));
+    function applyThumbWidth(w, min = THUMB_MIN_WIDTH) {
+        thumbWidth = Math.round(Math.min(THUMB_MAX_WIDTH, Math.max(min, w)));
         document.documentElement.style.setProperty('--thumb-w', `${thumbWidth}px`);
         if (thumbsOpen) editTools.style.left = `${editToolsLeftFor(thumbWidth)}px`;
     }
@@ -175,6 +175,8 @@
     }
 
     applyThumbWidth(thumbWidth);
+    const savedThumbWidth = thumbWidth;
+    const THUMB_MOBILE_WIDTH = 90;
 
     // Arrastrar el divisor cambia el ancho del panel de miniaturas
     thumbResizer.addEventListener('pointerdown', e => {
@@ -212,6 +214,10 @@
 
     function setThumbsVisible(show) {
         thumbsOpen = show;
+        document.body.classList.toggle('thumbs-open', show);
+        // Celulares: panel angosto para que la hoja tenga lugar (no se guarda como preferencia)
+        if (show && MOBILE_QUERY.matches) applyThumbWidth(THUMB_MOBILE_WIDTH, THUMB_MOBILE_WIDTH);
+        else if (show && thumbWidth === THUMB_MOBILE_WIDTH) applyThumbWidth(savedThumbWidth);
         btnThumbView.setAttribute('aria-checked', String(show));
         btnThumbToggle.setAttribute('aria-pressed', String(show));
         btnThumbToggle.title = show ? 'Ocultar miniaturas' : 'Mostrar miniaturas';
@@ -228,7 +234,10 @@
                 { width: THUMB_COLLAPSED_WIDTH, flexBasis: THUMB_COLLAPSED_WIDTH },
                 { width: thumbWidth, flexBasis: thumbWidth, duration: 0.3, ease: 'power2.out',
                   clearProps: 'width,flexBasis',
-                  onComplete: () => window.dispatchEvent(new CustomEvent('thumbnails-resized')) });
+                  onComplete: () => {
+                      window.dispatchEvent(new CustomEvent('thumbnails-resized'));
+                      window.dispatchEvent(new CustomEvent('thumbnails-toggled'));
+                  } });
             gsap.fromTo(thumbResizer, { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.2, delay: 0.25, clearProps: 'opacity,visibility' });
         } else {
             gsap.set(thumbResizer, { autoAlpha: 0 });
@@ -238,6 +247,7 @@
                   onComplete: () => {
                       thumbList.classList.add('collapsed');
                       gsap.set([thumbList, thumbResizer], { clearProps: 'width,flexBasis,opacity,visibility' });
+                      window.dispatchEvent(new CustomEvent('thumbnails-toggled'));
                   } });
         }
         gsap.to(editTools, {
@@ -267,6 +277,7 @@
     const optColor = toolOptions.querySelector('.tool-opt-color');
     const optWidth = toolOptions.querySelector('.tool-opt-width');
     const optPalette = toolOptions.querySelector('.tool-opt-palette');
+    const optHl = toolOptions.querySelector('.tool-opt-hl');
     gsap.set(toolOptions, { yPercent: -50 });
 
     function updateToolOptions(radio) {
@@ -282,7 +293,10 @@
             return;
         }
 
-        optColor.hidden = !opts.color;
+        // Celulares: el resaltador usa colores fijos en vez del selector de color del sistema
+        const hlPalette = radio.value === 'highlight' && MOBILE_QUERY.matches;
+        optColor.hidden = !opts.color || hlPalette;
+        optHl.hidden = !hlPalette;
         optWidth.hidden = !opts.width;
         optPalette.hidden = !opts.palette;
 

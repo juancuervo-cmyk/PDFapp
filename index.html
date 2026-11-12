@@ -2,7 +2,8 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- Sin zoom de toda la app con los dedos: el zoom con 2 dedos agranda sólo la hoja (app.js) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <title>Cuervo.PDF</title>
     <!-- App instalable (PWA) -->
     <link rel="manifest" href="manifest.webmanifest">
@@ -81,11 +82,12 @@
             </div>
 
             <!-- Desplegable Vistas -->
+            <!-- Menú Vista: sólo en celulares (agrupa Cuadrícula y Miniaturas) -->
             <div class="menu" id="menu-view">
-                <button class="menu-trigger" aria-haspopup="true" aria-expanded="false">Vistas <i data-icon="caret-down"></i></button>
+                <button class="menu-trigger" aria-haspopup="true" aria-expanded="false">Vista <i data-icon="caret-down"></i></button>
                 <div class="menu-panel" role="menu" hidden>
-                    <button id="btn-thumbnail-view" role="menuitemcheckbox" aria-checked="false" title="Mostrar u ocultar la lista de miniaturas"><i data-icon="sidebar-simple"></i> Miniatura <span class="menu-check"><i data-icon="check"></i></span></button>
-                    <button id="btn-theme" role="menuitem" title="Cambiar entre Modo Oscuro y Claro"><i data-icon="moon"></i> Modo Oscuro</button>
+                    <button id="btn-grid-menu" role="menuitem" title="Organizador masivo de páginas en cuadrícula" disabled><i data-icon="squares-four"></i> Cuadrícula</button>
+                    <button id="btn-thumbnail-view" role="menuitemcheckbox" aria-checked="false" title="Mostrar u ocultar la lista de miniaturas"><i data-icon="sidebar-simple"></i> Miniaturas <span class="menu-check"><i data-icon="check"></i></span></button>
                 </div>
             </div>
 
@@ -107,6 +109,8 @@
 
             <!-- Mostrar / ocultar los menús flotantes (ojo abierto: se ven; cerrado: ocultos) -->
             <button type="button" id="btn-toggle-floating" aria-pressed="true" title="Ocultar los menús flotantes"><i data-icon="eye"></i></button>
+            <!-- Modo claro / oscuro -->
+            <button type="button" id="btn-theme" title="Cambiar a modo oscuro"><i data-icon="moon"></i></button>
         </div>
 
         <!-- Área central: miniaturas + página -->
@@ -176,6 +180,11 @@
                     <span class="tool-opt tool-opt-palette" hidden>
                         <span class="label">Color de la nota: </span>
                         <span id="note-palette" class="note-palette"></span>
+                    </span>
+                    <!-- Resaltador en celulares: colores fijos (sin selector de color del sistema) -->
+                    <span class="tool-opt tool-opt-hl" hidden>
+                        <span class="label">Color: </span>
+                        <span id="hl-palette" class="note-palette"></span>
                     </span>
                     <span class="tool-opt tool-opt-width">
                         <span class="label">Grosor: </span>

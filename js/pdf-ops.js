@@ -503,6 +503,27 @@ function addLineAnnot(doc, page, p1, p2, color, width) {
     });
 }
 
+/**
+ * Resaltador por trazo (celulares): línea gruesa de p1 a p2 con fusión Multiplicar,
+ * así el texto de abajo se sigue leyendo. Es una anotación Line (la goma la borra).
+ */
+function addMarkerLineAnnot(doc, page, p1, p2, color, width) {
+    const w = width;
+    const rect = padRect(rectFromPoints([p1, p2]), w);
+    const P = p => `${fmtNum(p.x)} ${fmtNum(p.y)}`;
+    const content = `/GS0 gs ${fmtNum(w)} w 0 J 1 j ${colorOp(color, true)} ${P(p1)} m ${P(p2)} l S`;
+    addAnnotation(doc, page, {
+        subtype: 'Line',
+        rect,
+        extra: { L: [p1.x, p1.y, p2.x, p2.y], C: color, BS: { W: w, S: 'S' } },
+        ap: {
+            bbox: [rect.x0, rect.y0, rect.x1, rect.y1],
+            content,
+            resources: { ExtGState: { GS0: { Type: 'ExtGState', BM: 'Multiply', CA: 1, ca: 1 } } }
+        }
+    });
+}
+
 /** page.add_ink_annot([stroke]) */
 function addInkAnnot(doc, page, points, color, width) {
     const w = width;

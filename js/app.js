@@ -82,6 +82,7 @@ const ui = {
     searchNext: $('search-next'),
     searchClear: $('search-clear'),
     btnGridView: $('btn-grid-view'),
+    btnGridMenu: $('btn-grid-menu'),
     btnQrValidate: $('btn-qr-validate'),
     btnMerge: $('btn-merge'),
     btnSignature: $('btn-signature'),
@@ -168,7 +169,7 @@ function setModified(modified = true) {
 }
 
 function enableControls(enable) {
-    [ui.btnGridView, ui.btnQrValidate, ui.btnSignature,ui.btnPrint, ui.btnExport, ui.btnExportImg, ui.btnExportPdf,
+    [ui.btnGridView, ui.btnGridMenu, ui.btnQrValidate, ui.btnSignature,ui.btnPrint, ui.btnExport, ui.btnExportImg, ui.btnExportPdf,
      ui.btnInsertImg, ui.btnPrev, ui.btnNext, ui.btnZoomIn, ui.btnZoomOut, ui.btnDeletePage, ui.btnBlankPage,
      ui.btnRotateLeft, ui.btnRotateRight, ui.btnSave, ui.btnSaveAs, ui.spinPage, ui.searchInput].forEach(el => { el.disabled = !enable; });
 }
@@ -182,7 +183,9 @@ function hasDocument() {
 function toggleTheme() {
     state.darkMode = !state.darkMode;
     document.body.classList.toggle('dark', state.darkMode);
-    ui.btnTheme.innerHTML = state.darkMode ? `${icon('sun')} Modo Claro` : `${icon('moon')} Modo Oscuro`;
+    // Botón sólo con ícono (al lado del ojo): muestra el modo al que se pasa
+    ui.btnTheme.innerHTML = state.darkMode ? icon('sun') : icon('moon');
+    ui.btnTheme.title = state.darkMode ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro';
 }
 
 /* ---------- Utilidades de archivos ---------- */
@@ -1365,11 +1368,20 @@ function zoomAtPointer(direction, clientX, clientY) {
     const oldZoom = state.zoomFactor;
     const newZoom = direction > 0 ? oldZoom + 0.25 : (oldZoom > 0.5 ? oldZoom - 0.25 : oldZoom);
     if (newZoom === oldZoom) return;
+    zoomViewTo(newZoom, clientX, clientY);
+}
 
+/**
+ * Lleva el zoom a `newZoom` dejando fijo en pantalla el punto (clientX, clientY).
+ * Con `render = false` sólo se escalan las hojas al instante (pellizco en curso en el celular);
+ * el redibujado nítido se hace al soltar.
+ */
+function zoomViewTo(newZoom, clientX, clientY, render = true) {
+    const oldZoom = state.zoomFactor;
     const slots = Array.from(ui.placeholder.parentElement.querySelectorAll(':scope > .page-slot'));
     if (!slots.length) {
         state.zoomFactor = newZoom;
-        renderCurrentPage();
+        if (render) renderCurrentPage();
         return;
     }
     // Hoja de referencia: la que está bajo el mouse (o la más cercana) y la posición relativa dentro de ella
@@ -1406,7 +1418,7 @@ function zoomAtPointer(direction, clientX, clientY) {
     };
     keepAnchor();
     // Al terminar de dibujar se corrige cualquier diferencia mínima de tamaño
-    renderCurrentPage().then(keepAnchor, () => {});
+    if (render) renderCurrentPage().then(keepAnchor, () => {});
 }
 
 /* ---------- Modos, color y grosor ---------- */
@@ -2264,6 +2276,14 @@ async function addLineAnnotation(p1, p2) {
     await editDocument(doc => addLineAnnot(doc, doc.getPage(state.currentPage), p1, p2, state.brushColor, state.brushWidth));
 }
 
+/* Resaltador de celulares: grosor del trazo en puntos PDF (~ alto de un renglón) */
+const MARKER_WIDTH = 14;
+
+async function addMarkerLine(p1, p2) {
+    if (!hasDocument()) return;
+    await editDocument(doc => addMarkerLineAnnot(doc, doc.getPage(state.currentPage), p1, p2, state.brushColor, MARKER_WIDTH));
+}
+
 async function deleteAnnotationAtPoint(pdfPt) {
     if (!hasDocument()) return;
     await editDocument(doc => deleteAnnotationAt(doc, doc.getPage(state.currentPage), pdfPt));
@@ -3081,7 +3101,18 @@ function paintOverlay() {
     const w = Math.abs(e.x - s.x), h = Math.abs(e.y - s.y);
     ctx.setLineDash([]);
 
-    if (mode === 'highlight') {
+    if (mode === 'highlight' && MOBILE_QUERY.matches) {
+        // Celulares: trazo de resaltador de inicio a fin (sin leer las palabras)
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.strokeStyle = rgbaFromBrush(0.75);
+        ctx.lineWidth = MARKER_WIDTH * state.zoomFactor;
+        ctx.lineCap = 'butt';
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y);
+        ctx.lineTo(e.x, e.y);
+        ctx.stroke();
+        ctx.globalCompositeOperation = 'source-over';
+    } else if (mode === 'highlight') {
         ctx.fillStyle = rgbaFromBrush(60 / 255);
         ctx.fillRect(x, y, w, h);
         ctx.strokeStyle = rgbaFromBrush();
@@ -3235,7 +3266,13 @@ function onPageMouseUp(e) {
     const rw = pdfRect.x1 - pdfRect.x0;
     const rh = pdfRect.y1 - pdfRect.y0;
 
-    if (mode === 'highlight') {
+    if (mode === 'highlight' && MOBILE_QUERY.matches) {
+        if (Math.abs(start.x - end.x) > 3 || Math.abs(start.y - end.y) > 3) {
+            const p1 = screenToPdfCoords(start);
+            const p2 = screenToPdfCoords(end);
+            runTask(() => addMarkerLine(p1, p2));
+        }
+    } else if (mode === 'highlight') {
         if (rw > 2 && rh > 2) runTask(() => applyAreaHighlight(pdfRect));
     } else if (mode === 'rect') {
         if (rw > 2 && rh > 2) runTask(() => addRectAnnotation(pdfRect));
@@ -3277,6 +3314,7 @@ function onPageDoubleClick(e) {
     if (!hasDocument() || !state.pageMapper || e.button !== 0) return;
     const pdfPt = screenToPdfCoords(eventToCanvasPoint(e));
     const { clientX, clientY } = e;
+    if (state.currentMode === 'highlight' && MOBILE_QUERY.matches) return; // celulares: el resaltador es por trazo
     if (state.currentMode === 'highlight') {
         runTask(async () => {
             const words = await getPageWords(state.currentPage);
@@ -3321,6 +3359,8 @@ function initUi() {
     initTextFormatBar();
     initSearch();
     initNotes();
+    initHighlightPalette();
+    initTouchGestures();
     ui.btnOpen.addEventListener('click', openFileOrImage);
     ui.btnCamera.addEventListener('click', takePhoto);
     ui.fileCamera.addEventListener('change', () => {
@@ -3338,6 +3378,7 @@ function initUi() {
     ui.btnUndo.addEventListener('click', () => runTask(undoAction));
     ui.btnRedo.addEventListener('click', () => runTask(redoAction));
     ui.btnGridView.addEventListener('click', () => runTask(openGridView));
+    ui.btnGridMenu.addEventListener('click', () => runTask(openGridView)); // Vista > Cuadrícula (celulares)
     ui.btnQrValidate.addEventListener('click', toggleQrTool);
     ui.btnMerge.addEventListener('click', () => runTask(mergePdf));
     $('btn-divide').addEventListener('click', () => runTask(splitDocument));
@@ -3792,6 +3833,149 @@ function initNotes() {
         if (!btn) return;
         noteUi.color = NOTE_COLORS[parseInt(btn.dataset.i, 10)][1].slice();
         palette.querySelectorAll('.note-swatch').forEach(b => b.classList.toggle('active', b === btn));
+    });
+}
+
+/* ---------- Resaltador en celulares: colores fijos ---------- */
+
+const HIGHLIGHT_COLORS = [
+    ['Celeste', [0.45, 0.82, 1]],
+    ['Rosa', [1, 0.55, 0.8]],
+    ['Verde', [0.5, 0.92, 0.4]],
+    ['Amarillo', [1, 1, 0]],
+    ['Violeta', [0.72, 0.56, 1]],
+    ['Rojo', [1, 0.35, 0.35]],
+];
+
+function initHighlightPalette() {
+    const palette = document.getElementById('hl-palette');
+    if (!palette) return;
+    const current = toolSettings.highlight.color;
+    palette.innerHTML = HIGHLIGHT_COLORS.map(([name, c], i) => {
+        const active = c.every((v, k) => Math.abs(v - current[k]) < 0.01);
+        return `<button type="button" class="note-swatch${active ? ' active' : ''}" data-i="${i}" title="${name}" style="background:${noteRgbCss(c)}"></button>`;
+    }).join('');
+    palette.addEventListener('click', e => {
+        const btn = e.target.closest('.note-swatch');
+        if (!btn) return;
+        const color = HIGHLIGHT_COLORS[parseInt(btn.dataset.i, 10)][1];
+        toolSettings.highlight.color = color.slice();
+        if (state.currentMode === 'highlight') setBrushColor(color.slice());
+        palette.querySelectorAll('.note-swatch').forEach(b => b.classList.toggle('active', b === btn));
+    });
+}
+
+/* ---------- Gestos táctiles (celulares) ----------
+ * Con una herramienta de edición elegida, 1 dedo usa la herramienta (no desplaza);
+ * 2 dedos desplazan la vista y, si se separan o juntan, hacen zoom sólo de la hoja.
+ * En Navegar, 1 dedo desplaza (nativo) y 2 dedos hacen zoom de la hoja.
+ * Los toques simples (Texto, Nota, Borrar, botones) siguen llegando como clics normales.
+ * Se reutilizan los mismos manejadores del mouse, así las herramientas funcionan igual. */
+
+const TOUCH_TAP_MODES = ['navigate', 'text', 'note', 'erase'];
+const PINCH_START_RATIO = 0.08; // hasta acá, 2 dedos que se mueven juntos sólo desplazan
+const touchGesture = { tool: false, pinch: null };
+
+function touchAsMouse(t) {
+    return { clientX: t.clientX, clientY: t.clientY, button: 0, detail: 1, target: ui.overlay, preventDefault() {} };
+}
+
+function cancelToolTouch() {
+    if (!touchGesture.tool) return;
+    touchGesture.tool = false;
+    interaction.drawing = false;
+    interaction.currentStroke = [];
+    interaction.interactiveDrag = false;
+    clearOverlay();
+}
+
+const touchMid = ts => ({ x: (ts[0].clientX + ts[1].clientX) / 2, y: (ts[0].clientY + ts[1].clientY) / 2 });
+const touchDist = ts => Math.hypot(ts[0].clientX - ts[1].clientX, ts[0].clientY - ts[1].clientY) || 1;
+
+/* Zoom máximo con los dedos: la hoja dibujada no pasa de ~16 Mpx (límite de memoria de los celulares) */
+function maxPinchZoom() {
+    return Math.min(4, 5.5 / (window.devicePixelRatio || 1));
+}
+
+function startPinch(ts) {
+    commitTextEditor();
+    commitImageEditor();
+    touchGesture.pinch = { startDist: touchDist(ts), startZoom: state.zoomFactor, last: touchMid(ts), zooming: false, raf: 0, pending: null };
+}
+
+function movePinch(ts) {
+    const p = touchGesture.pinch;
+    p.pending = { mid: touchMid(ts), dist: touchDist(ts) };
+    if (p.raf) return;
+    p.raf = requestAnimationFrame(() => {
+        p.raf = 0;
+        const { mid, dist } = p.pending;
+        ui.scrollArea.scrollLeft -= mid.x - p.last.x;
+        ui.scrollArea.scrollTop -= mid.y - p.last.y;
+        p.last = mid;
+        const ratio = dist / p.startDist;
+        if (!p.zooming && Math.abs(ratio - 1) > PINCH_START_RATIO) p.zooming = true;
+        if (!p.zooming) return;
+        const z = Math.min(maxPinchZoom(), Math.max(0.25, p.startZoom * ratio));
+        if (Math.abs(z - state.zoomFactor) > 0.002) zoomViewTo(z, mid.x, mid.y, false);
+    });
+}
+
+function endPinch() {
+    const p = touchGesture.pinch;
+    touchGesture.pinch = null;
+    if (p.raf) cancelAnimationFrame(p.raf);
+    if (p.zooming) zoomViewTo(state.zoomFactor, p.last.x, p.last.y); // redibujado nítido al soltar
+}
+
+function initTouchGestures() {
+    const area = ui.scrollArea;
+    area.addEventListener('touchstart', e => {
+        if (!MOBILE_QUERY.matches || !hasDocument()) return;
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            cancelToolTouch();
+            startPinch(e.touches);
+            return;
+        }
+        if (e.touches.length !== 1 || TOUCH_TAP_MODES.includes(state.currentMode)) return;
+        const tl = document.getElementById('text-layer');
+        if (e.target !== ui.overlay && !(tl && tl.contains(e.target))) return;
+        e.preventDefault(); // el dedo dibuja: sin scroll ni clics emulados
+        touchGesture.tool = true;
+        onPageMouseDown(touchAsMouse(e.touches[0]));
+    }, { passive: false });
+
+    area.addEventListener('touchmove', e => {
+        if (touchGesture.pinch && e.touches.length >= 2) {
+            e.preventDefault();
+            movePinch(e.touches);
+        } else if (touchGesture.tool && e.touches.length === 1) {
+            e.preventDefault();
+            onPageMouseMove(touchAsMouse(e.touches[0]));
+        }
+    }, { passive: false });
+
+    area.addEventListener('touchend', e => {
+        if (touchGesture.tool) {
+            touchGesture.tool = false;
+            onPageMouseUp(touchAsMouse(e.changedTouches[0]));
+        }
+        if (touchGesture.pinch && e.touches.length < 2) endPinch();
+    });
+    area.addEventListener('touchcancel', () => {
+        cancelToolTouch();
+        if (touchGesture.pinch) endPinch();
+    });
+
+    // iOS: bloquea el zoom de toda la app con los dedos (Safari ignora user-scalable=no)
+    document.addEventListener('gesturestart', e => { if (MOBILE_QUERY.matches) e.preventDefault(); });
+
+    // Al abrir/cerrar las miniaturas en el celular la hoja se reajusta al ancho que queda
+    window.addEventListener('thumbnails-toggled', async () => {
+        if (!MOBILE_QUERY.matches || !state.pdfJsDoc) return;
+        state.zoomFactor = await fitWidthZoom();
+        renderCurrentPage();
     });
 }
 
