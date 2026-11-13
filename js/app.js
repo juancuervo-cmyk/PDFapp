@@ -13,6 +13,7 @@ const ZXING_URL = 'https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.4/dist/iife/reade
 
 const JSZIP_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
 const JSQR_URL = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+const COMPRESS_JS_URL = 'js/compress.js'; // "Comprimir PDF": se baja sólo al usarla
 const CAMERA_JS_URL = 'js/camera.js'; // "Sacar foto": se baja sólo al usarla
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}pdf.worker.min.js`;
@@ -70,6 +71,7 @@ const ui = {
     btnOpen: $('btn-open'),
     btnSave: $('btn-save'),
     btnSaveAs: $('btn-save-as'),
+    btnCompress: $('btn-compress'),
     btnPrint: $('btn-print'),
     btnExport: $('btn-export'),
     btnExportImg: $('btn-export-img'),
@@ -171,7 +173,7 @@ function setModified(modified = true) {
 function enableControls(enable) {
     [ui.btnGridView, ui.btnGridMenu, ui.btnQrValidate, ui.btnSignature,ui.btnPrint, ui.btnExport, ui.btnExportImg, ui.btnExportPdf,
      ui.btnInsertImg, ui.btnPrev, ui.btnNext, ui.btnZoomIn, ui.btnZoomOut, ui.btnDeletePage, ui.btnBlankPage,
-     ui.btnRotateLeft, ui.btnRotateRight, ui.btnSave, ui.btnSaveAs, ui.spinPage, ui.searchInput].forEach(el => { el.disabled = !enable; });
+     ui.btnRotateLeft, ui.btnRotateRight, ui.btnSave, ui.btnSaveAs, ui.btnCompress, ui.spinPage, ui.searchInput].forEach(el => { el.disabled = !enable; });
 }
 
 function hasDocument() {
@@ -309,7 +311,23 @@ async function insertFileIntoDoc(doc, file, index) {
     return images.length;
 }
 
+/**
+ * Garantiza que el nombre termine exactamente en ".pdf". Firefox respeta el nombre tal cual,
+ * y un ".pdfalgo" (o un nombre sin extensión) quedaba como un tipo de archivo desconocido.
+ */
+function ensurePdfName(name) {
+    const n = String(name || '').trim().replace(/[.\s]+$/, '');
+    if (!n) return 'documento.pdf';
+    if (/\.pdf$/i.test(n)) return n.slice(0, -4) + '.pdf';
+    if (/\.pdf[^.\\/]*$/i.test(n)) return n.replace(/\.pdf[^.\\/]*$/i, '.pdf'); // ".pdfcompress" -> ".pdf"
+    return n + '.pdf';
+}
+
 function downloadBlob(blob, filename) {
+    if (blob.type === 'application/pdf' || /\.pdf/i.test(filename)) {
+        filename = ensurePdfName(filename);
+        if (blob.type !== 'application/pdf') blob = new Blob([blob], { type: 'application/pdf' });
+    }
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -330,6 +348,7 @@ function downloadBlob(blob, filename) {
 const FILE_PICKER_ID = 'lector-pdf';
 
 async function saveBytesAs(suggestedName, getBytes, onHandle) {
+    suggestedName = ensurePdfName(suggestedName);
     if (window.showSaveFilePicker) {
         let handle;
         try {
@@ -1548,9 +1567,33 @@ async function validateQrInRect(screenRect) {
         showStatus(`El QR no es de AFIP/ARCA: "${text.slice(0, 80)}"`, 8000, 'warning');
         return;
     }
+    if (MOBILE_QUERY.matches) {
+        await openQrUrlOnMobile(url.href);
+        selectModeRadio('navigate');
+        return;
+    }
     window.open(url.href, '_blank', 'noopener');
     showStatus('QR leído. Se abrió la página de validación de AFIP/ARCA.', 6000, 'check-circle');
     selectModeRadio('navigate');
+}
+
+/**
+ * Celulares: leer el QR tarda unos segundos y para entonces el navegador ya no permite abrir
+ * pestañas (sólo lo deja en el momento del toque). Se intenta igual; si la bloquea, un aviso
+ * con el botón "Abrir validación" la abre con un toque nuevo.
+ */
+async function openQrUrlOnMobile(href) {
+    const win = window.open(href, '_blank');
+    if (win) {
+        win.opener = null;
+        return;
+    }
+    const reply = await messageBox('info', 'QR leído',
+        'Es un QR de AFIP/ARCA. Tocá "Abrir validación" para ver la página de la factura.', [
+            { label: 'Abrir validación', value: 'open', isDefault: true },
+            { label: 'Cancelar', value: 'cancel' }
+        ], 'cancel');
+    if (reply === 'open') window.open(href, '_blank', 'noopener');
 }
 
 function selectModeRadio(mode) {
@@ -1681,6 +1724,42 @@ async function writePdf(forceAs) {
     } catch (e) {
         await msgCritical('Error', `No se pudo guardar el archivo:\n${e.message || e}`);
         return false;
+    }
+}
+
+/**
+ * Comprimir PDF: genera una copia más liviana y la guarda con "Guardar como"
+ * (con el mismo nombre sugerido, así se puede reemplazar el original o renombrarla).
+ * El documento abierto no se modifica.
+ */
+async function compressPdf() {
+    if (!hasDocument()) return;
+    const level = await compressDialog();
+    if (!level) return;
+    const original = state.pdfBytes;
+    let result = null;
+    try {
+        const saved = await saveBytesAs(state.currentFilePath || 'documento.pdf', async () => {
+            showStatus('Comprimiendo PDF...');
+            await loadScript(COMPRESS_JS_URL);
+            result = await compressPdfBytes(original, level, msg => showStatus(msg));
+            return result;
+        });
+        showStatus('');
+        if (!saved) return;
+        const fmt = n => n >= 1048576 ? `${(n / 1048576).toFixed(2)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+        if (result === original) {
+            await msgInfo('Comprimir PDF', `El PDF ya estaba optimizado y no se pudo achicar más.
+Se guardó "${saved}" (${fmt(original.length)}).`);
+        } else {
+            const pct = Math.round((1 - result.length / original.length) * 100);
+            await msgInfo('Comprimir PDF', `Se guardó "${saved}".
+Tamaño: ${fmt(original.length)} → ${fmt(result.length)} (${pct}% menos).`);
+        }
+    } catch (e) {
+        showStatus('');
+        await msgCritical('Error', `No se pudo comprimir el PDF:
+${e.message || e}`);
     }
 }
 
@@ -3372,6 +3451,7 @@ function initUi() {
     $('btn-new-tab').addEventListener('click', openNewReaderTab);
     ui.btnSave.addEventListener('click', () => runTask(savePdf));
     ui.btnSaveAs.addEventListener('click', () => runTask(savePdfAs));
+    ui.btnCompress.addEventListener('click', () => runTask(compressPdf));
     ui.btnPrint.addEventListener('click', () => runTask(printPdf));
     ui.btnExportImg.addEventListener('click', () => runTask(exportToImages));
     ui.btnExportPdf.addEventListener('click', () => runTask(savePdf));
@@ -3732,7 +3812,7 @@ function buildNoteEl(n) {
         commitNoteEdit(el, { pinned });
     });
     head.querySelector('.pn-min').addEventListener('click', () => {
-        if (el._note.pinned) return;
+        if (el._note.pinned && !MOBILE_QUERY.matches) return; // en celulares no hay pin: siempre se puede minimizar
         if (area.value !== el._note.text) commitNoteEdit(el, { text: area.value });
         minimizeNote();
     });
@@ -3820,6 +3900,15 @@ function createNoteAt(screenPt) {
         const el = buildNoteEl({ id, x: pos.x, y: pos.y, color, text: '' });
         notesLayer().appendChild(el);
         el.querySelector('.pn-text').focus();
+        // Celulares: una nota por vez; después se vuelve a Navegar, así tocar en otro lado
+        // deselecciona la nota y permite moverse en vez de crear otra
+        if (MOBILE_QUERY.matches) {
+            const nav = document.querySelector('#edit-tools input[name="mode"][value="navigate"]');
+            if (nav) {
+                nav.checked = true;
+                nav.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }
     });
 }
 

@@ -2503,9 +2503,54 @@ button.merge-empty.split-empty {
     #thumb-resizer,
     #btn-thumb-toggle { display: none !important; }
     #thumbnail-list { padding-top: 6px; }
-    #main { padding: 6px; }
-    #edit-tools { left: 10px !important; }
-    body.thumbs-open #edit-tools { left: calc(var(--thumb-w) + 18px) !important; }
+
+    /* Menús fijos arriba (no flotantes): una sola barra con las herramientas de edición
+       a la izquierda y las de hoja a la derecha; debajo, miniaturas + hoja */
+    #main {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 6px 4px;
+        padding: 6px;
+    }
+    #thumbnail-list { grid-row: 2; grid-column: 1; }
+    #scroll-area { grid-row: 2; grid-column: 2 / 4; }
+    #edit-tools,
+    #side-tools {
+        position: relative !important;
+        top: auto !important;
+        left: auto !important;
+        right: auto !important;
+        transform: none !important;
+        grid-row: 1;
+        flex-direction: row;
+        gap: 2px;
+        padding: 4px;
+        box-shadow: none;
+        z-index: 30;
+    }
+    #edit-tools { grid-column: 1 / 3; border-radius: var(--r-lg) 0 0 var(--r-lg); border-right: none; }
+    #side-tools { grid-column: 3; border-radius: 0 var(--r-lg) var(--r-lg) 0; border-left: none; }
+    #edit-tools .side-grip,
+    #side-tools .side-grip,
+    .floating-bar::after { display: none; }
+    #edit-tools .side-separator,
+    #side-tools .side-separator { width: 1px; height: 22px; margin: 0 3px; }
+    #side-tools .btn-icon { width: 33px; height: 33px; }
+
+    /* Sin zoom (se usan los dedos) ni girar página */
+    #btn-zoom-in, #btn-zoom-out, #btn-zoom-out + .side-separator,
+    #btn-rotate-left, #btn-rotate-right, #btn-rotate-right + .side-separator { display: none; }
+
+    /* Desplegables de la barra: hacia abajo, debajo de su botón */
+    #edit-tools .group-flyout,
+    #tool-options {
+        top: calc(100% + 10px) !important;
+        transform: none !important;
+    }
+    #tool-options { left: 0 !important; }
+    /* La barra se ve como una sola pieza */
+    #side-tools { margin-left: -4px; }
 
     /* Sin zoom de toda la app con los dedos (iOS ignora user-scalable=no) */
     html, body { touch-action: pan-x pan-y; }
@@ -2517,6 +2562,19 @@ button.merge-empty.split-empty {
 
     /* Sin barra de estado abajo */
     #status-bar { display: none; }
+
+    /* Notas simples: el color se elige al crearla; sólo minimizar y eliminar */
+    .pn-dots,
+    .pn-pin { display: none; }
+    .pn-min { margin-left: auto; }
+    .pn.pinned .pn-min { display: inline-flex; }
+    .pn-btn { width: 30px; height: 30px; }
+    .pn-btn .ph-icon { width: 17px; height: 17px; }
+    /* Minimizada: el ícono queda más grande para poder tocarlo */
+    .pn-bubble {
+        width: max(calc(var(--pn-size) * 1.5), 30px);
+        height: max(calc(var(--pn-size) * 1.5), 30px);
+    }
 
     /* Funciones que no sirven en el celular: Nueva pestaña, Copiar texto y el grupo
        Selección / Recortar / Borrar área */

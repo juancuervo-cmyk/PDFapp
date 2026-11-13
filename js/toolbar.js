@@ -372,6 +372,8 @@
             toolOptions.hidden = true;
         }
         fly.style.top = `${toggle.offsetTop + toggle.offsetHeight / 2}px`;
+        // Celulares (barra fija horizontal): el desplegable se abre hacia abajo, debajo de su botón
+        fly.style.left = MOBILE_QUERY.matches ? `${toggle.offsetLeft}px` : '';
         gsap.killTweensOf(fly);
         fly.hidden = false;
         toggle.setAttribute('aria-expanded', 'true');

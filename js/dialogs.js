@@ -249,6 +249,33 @@ function exportImageDialog(totalPages, currentPage) {
     });
 }
 
+/** Nivel de compresión: 'low' | 'medium' | 'high', o null si se cancela. */
+function compressDialog() {
+    return new Promise(resolve => {
+        const { dlg, body, footer } = createDialog('Comprimir PDF', { className: 'export-dialog' });
+        body.innerHTML = `
+            <p><b>Nivel de compresión:</b></p>
+            <div class="dialog-col">
+                <label><input type="radio" name="cmp-level" value="low"> Baja (mejor calidad de imágenes)</label>
+                <label><input type="radio" name="cmp-level" value="medium" checked> Recomendada (buen equilibrio)</label>
+                <label><input type="radio" name="cmp-level" value="high"> Alta (archivo más liviano)</label>
+            </div>
+            <p class="dialog-gap">El texto no se modifica; se achican las imágenes. Después elegís dónde guardarlo: con el mismo nombre reemplazás el original.</p>
+        `;
+        let done = false;
+        const finish = value => {
+            if (done) return;
+            done = true;
+            closeDialog(dlg);
+            resolve(value);
+        };
+        addDialogButton(footer, 'Comprimir', () => finish(body.querySelector('input[name="cmp-level"]:checked').value), { isDefault: true });
+        addDialogButton(footer, 'Cancelar', () => finish(null));
+        dlg.addEventListener('cancel', e => { e.preventDefault(); finish(null); });
+        dlg.showModal();
+    });
+}
+
 function clampInt(value, min, max, fallback) {
     const n = parseInt(value, 10);
     if (Number.isNaN(n)) return fallback;
