@@ -15,6 +15,7 @@ const JSZIP_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min
 const JSQR_URL = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
 const COMPRESS_JS_URL = 'js/compress.js'; // "Comprimir PDF": se baja sólo al usarla
 const CAMERA_JS_URL = 'js/camera.js'; // "Sacar foto": se baja sólo al usarla
+const REMOTE_CAMERA_JS_URL = 'js/remote-camera.js'; // "Foto con celular": se baja sólo al usarla
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN}pdf.worker.min.js`;
 
@@ -532,6 +533,27 @@ async function addCameraPhoto(file) {
     document.body.classList.add('busy');
     if (!blob) return;
     await loadOrMergeDroppedFiles([new File([blob], 'Foto.jpg', { type: 'image/jpeg' })]);
+}
+
+/** Foto con celular (compu): QR para que el celular saque la foto y la mande acá. */
+async function phoneCamera() {
+    if (isAnyDialogOpen()) return;
+    try {
+        await loadScript(REMOTE_CAMERA_JS_URL);
+        await openRemoteCamera();
+    } catch (e) {
+        console.error(e);
+        await msgCritical('Foto con celular', e.message || String(e));
+    }
+}
+
+/** El celular abrió el enlace del QR (?celu=código): se muestra sólo el modo cámara. */
+function startPhoneCameraFromUrl() {
+    const code = new URLSearchParams(location.search).get('celu');
+    if (!code || !/^[a-z0-9]{6,32}$/.test(code)) return;
+    loadScript(REMOTE_CAMERA_JS_URL)
+        .then(() => startPhoneCameraMode(code))
+        .catch(e => msgCritical('Foto con celular', e.message || String(e)));
 }
 
 function insertImageAsPage() {
@@ -3470,6 +3492,7 @@ function initUi() {
     initTouchGestures();
     ui.btnOpen.addEventListener('click', openFileOrImage);
     ui.btnCamera.addEventListener('click', takePhoto);
+    $('btn-phone-camera').addEventListener('click', phoneCamera);
     ui.fileCamera.addEventListener('change', () => {
         const file = ui.fileCamera.files[0];
         if (file) runTask(() => addCameraPhoto(file));
@@ -4357,3 +4380,4 @@ function setupShortcuts() {
 
 initUi();
 updateWindowTitle();
+startPhoneCameraFromUrl();

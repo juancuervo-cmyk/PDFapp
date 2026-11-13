@@ -3,7 +3,7 @@
    siempre se usa la última versión publicada) y las librerías de CDN, que tienen
    versión fija, se sirven desde la copia guardada. */
 
-const CACHE = 'cuervo-pdf-v14';
+const CACHE = 'cuervo-pdf-v15';
 
 // Con wifi lento, si la red no responde en este tiempo se usa la copia guardada (y la versión
 // nueva se sigue bajando en segundo plano para la próxima vez que se abra la app).
@@ -25,6 +25,7 @@ const APP_SHELL = [
     '/js/ui-fx.js',
     '/js/pwa.js',
     '/js/camera.js',
+    '/js/remote-camera.js',
     '/js/compress.js',
     '/icons/icon-192.png',
     '/icons/icon-512.png',

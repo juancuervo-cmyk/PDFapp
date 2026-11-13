@@ -19,6 +19,13 @@ para iconos utilizaremos siempre los cargados en C:\Users\agost\OneDrive\Escrito
 
 las animaciones deberás realizarlas con la librería GSAP
 
+LIBRERÍAS EXTERNAS — SEGURIDAD:
+- antes de proponer o agregar una librería nueva, verificá que sea segura: repositorio público y mantenido (no archivado, con actividad reciente), licencia abierta, ampliamente usada y sin vulnerabilidades conocidas. pasame ese resultado y AVISAME antes de implementarla.
+- cargala sólo desde CDNs confiables (cdnjs.cloudflare.com o cdn.jsdelivr.net), con la versión exacta fijada (ej. @1.5.5, nunca @latest ni sólo el número mayor como @5).
+- agregale el control de integridad (atributo integrity con su hash sha384, "SRI") para que el navegador no la ejecute si el archivo fue alterado.
+- si la librería usa un servicio o servidor externo de terceros, avisame qué datos pasan por ahí.
+- siempre que se pueda, cargala sólo cuando se usa la función (no en la carga inicial de la app).
+
 repositorio de github: https://github.com/juancuervo-cmyk/PDFapp (rama main)
 
 dominio en vercel: https://pdf-app-rose.vercel.app/

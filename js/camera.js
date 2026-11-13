@@ -349,8 +349,9 @@ function scanFileName() {
  *  - abajo, la foto con las 4 esquinas arrastrables;
  *  - Original / Escaneado, Compartir (PDF de una hoja), Cancelar y Agregar al PDF.
  * Devuelve un Blob JPEG para agregar al documento, o null si se cancela.
+ * `okLabel`: texto del botón de aceptar (en "Foto con celular" dice Enviar a la compu).
  */
-async function scanPhotoDialog(file) {
+async function scanPhotoDialog(file, { okLabel = 'Agregar al PDF' } = {}) {
     const original = await photoToCanvas(file);
     const W = original.width, H = original.height;
     const small = downscale(original, PREVIEW_MAX_SIDE);
@@ -521,7 +522,7 @@ async function scanPhotoDialog(file) {
         shareBtn.innerHTML = icon('share-network');
 
         addDialogButton(footer, 'Cancelar', () => finish(null));
-        addDialogButton(footer, 'Agregar al PDF', async () => {
+        addDialogButton(footer, okLabel, async () => {
             try {
                 finish(await finalBlob());
             } catch (e) {
