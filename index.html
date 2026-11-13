@@ -184,8 +184,14 @@
                     </span>
                     <!-- Resaltador en celulares: colores fijos (sin selector de color del sistema) -->
                     <span class="tool-opt tool-opt-hl" hidden>
-                        <span class="label">Color: </span>
-                        <span id="hl-palette" class="note-palette"></span>
+                        <span class="hl-row">
+                            <span class="label">Color: </span>
+                            <span id="hl-palette" class="note-palette"></span>
+                        </span>
+                        <span class="hl-row">
+                            <span class="label">Grosor: </span>
+                            <input type="range" id="hl-width" class="hl-width" min="6" max="30" step="1" value="14" aria-label="Grosor del resaltador">
+                        </span>
                     </span>
                     <span class="tool-opt tool-opt-width">
                         <span class="label">Grosor: </span>

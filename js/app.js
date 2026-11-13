@@ -1553,18 +1553,20 @@ async function readQrInRegion(pageIndex, rect) {
 /** Lee el QR del área marcada y abre la página de AFIP/ARCA para validar la factura. */
 async function validateQrInRect(screenRect) {
     const { available, text } = await readQrInRegion(state.currentPage, screenRect);
+    // Celulares: la barra de estado está oculta, así que los avisos van en un cuadro de diálogo
+    const warn = (msg, ms) => MOBILE_QUERY.matches ? msgWarning('Validar QR', msg) : showStatus(msg, ms, 'warning');
     if (!available) {
-        showStatus('No se pudo cargar el lector de QR. Revisá la conexión a internet y recargá la página.', 8000, 'warning');
+        await warn('No se pudo cargar el lector de QR. Revisá la conexión a internet y recargá la página.', 8000);
         return;
     }
     if (!text) {
-        showStatus('No se detectó ningún código QR en esa área. Probá encuadrándolo mejor.', 6000, 'warning');
+        await warn('No se detectó ningún código QR en esa área. Probá encuadrándolo mejor.', 6000);
         return;
     }
     let url;
     try { url = new URL(text.trim()); } catch (e) { url = null; }
     if (!url || !/(^|\.)(afip|arca)\.gob\.ar$/i.test(url.hostname) || url.protocol !== 'https:') {
-        showStatus(`El QR no es de AFIP/ARCA: "${text.slice(0, 80)}"`, 8000, 'warning');
+        await warn(`El QR no es de AFIP/ARCA: "${text.slice(0, 80)}"`, 8000);
         return;
     }
     if (MOBILE_QUERY.matches) {
@@ -1579,21 +1581,44 @@ async function validateQrInRect(screenRect) {
 
 /**
  * Celulares: leer el QR tarda unos segundos y para entonces el navegador ya no permite abrir
- * pestañas (sólo lo deja en el momento del toque). Se intenta igual; si la bloquea, un aviso
- * con el botón "Abrir validación" la abre con un toque nuevo.
+ * pestañas con window.open (sólo lo deja en el mismo toque y si no, lo bloquea en silencio).
+ * Por eso se muestra un aviso cuyo botón "Abrir validación" es un enlace real
+ * (<a target="_blank">): el toque del usuario lo abre siempre en una pestaña nueva.
  */
-async function openQrUrlOnMobile(href) {
-    const win = window.open(href, '_blank');
-    if (win) {
-        win.opener = null;
-        return;
-    }
-    const reply = await messageBox('info', 'QR leído',
-        'Es un QR de AFIP/ARCA. Tocá "Abrir validación" para ver la página de la factura.', [
-            { label: 'Abrir validación', value: 'open', isDefault: true },
-            { label: 'Cancelar', value: 'cancel' }
-        ], 'cancel');
-    if (reply === 'open') window.open(href, '_blank', 'noopener');
+function openQrUrlOnMobile(href) {
+    return new Promise(resolve => {
+        const { dlg, body, footer } = createDialog('QR leído', { className: 'message-box' });
+        const row = document.createElement('div');
+        row.className = 'message-row';
+        const ico = document.createElement('span');
+        ico.className = 'message-icon';
+        ico.innerHTML = window.icon('info');
+        const msg = document.createElement('div');
+        msg.className = 'message-text';
+        msg.textContent = 'Es un QR de AFIP/ARCA. Tocá "Abrir validación" para ver la página de la factura.';
+        row.append(ico, msg);
+        body.appendChild(row);
+
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            closeDialog(dlg);
+            resolve();
+        };
+        const link = document.createElement('a');
+        link.className = 'dialog-link-btn';
+        link.href = href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'Abrir validación';
+        link.addEventListener('click', () => setTimeout(finish, 0)); // se cierra después de que el enlace abre la pestaña
+        footer.appendChild(link);
+        addDialogButton(footer, 'Cancelar', finish);
+        dlg.addEventListener('cancel', e => { e.preventDefault(); finish(); });
+        dlg.showModal();
+        link.focus();
+    });
 }
 
 function selectModeRadio(mode) {
@@ -2355,12 +2380,15 @@ async function addLineAnnotation(p1, p2) {
     await editDocument(doc => addLineAnnot(doc, doc.getPage(state.currentPage), p1, p2, state.brushColor, state.brushWidth));
 }
 
-/* Resaltador de celulares: grosor del trazo en puntos PDF (~ alto de un renglón) */
-const MARKER_WIDTH = 14;
+/* Resaltador de celulares: grosor del trazo en puntos PDF (por defecto ~ alto de un renglón).
+ * Se elige con la línea deslizable de las opciones del resaltador. */
+const MARKER_WIDTH_DEFAULT = 14;
+let markerWidth = MARKER_WIDTH_DEFAULT;
 
 async function addMarkerLine(p1, p2) {
     if (!hasDocument()) return;
-    await editDocument(doc => addMarkerLineAnnot(doc, doc.getPage(state.currentPage), p1, p2, state.brushColor, MARKER_WIDTH));
+    const width = markerWidth;
+    await editDocument(doc => addMarkerLineAnnot(doc, doc.getPage(state.currentPage), p1, p2, state.brushColor, width));
 }
 
 async function deleteAnnotationAtPoint(pdfPt) {
@@ -3184,7 +3212,7 @@ function paintOverlay() {
         // Celulares: trazo de resaltador de inicio a fin (sin leer las palabras)
         ctx.globalCompositeOperation = 'multiply';
         ctx.strokeStyle = rgbaFromBrush(0.75);
-        ctx.lineWidth = MARKER_WIDTH * state.zoomFactor;
+        ctx.lineWidth = markerWidth * state.zoomFactor;
         ctx.lineCap = 'butt';
         ctx.beginPath();
         ctx.moveTo(s.x, s.y);
@@ -3952,6 +3980,15 @@ function initHighlightPalette() {
         if (state.currentMode === 'highlight') setBrushColor(color.slice());
         palette.querySelectorAll('.note-swatch').forEach(b => b.classList.toggle('active', b === btn));
     });
+
+    // Grosor del trazo: línea con un circulito que se desliza
+    const slider = document.getElementById('hl-width');
+    if (slider) {
+        slider.value = String(markerWidth);
+        slider.addEventListener('input', () => {
+            markerWidth = parseInt(slider.value, 10) || MARKER_WIDTH_DEFAULT;
+        });
+    }
 }
 
 /* ---------- Gestos táctiles (celulares) ----------

@@ -922,6 +922,59 @@ body.dragging-signature * { cursor: grabbing !important; user-select: none; }
 
 #tool-options .spin { width: 58px; padding: 4px 6px; border-radius: 999px; }
 
+/* Resaltador en celulares: colores arriba y grosor (línea con circulito) abajo */
+.tool-opt-hl:not([hidden]) { flex-direction: column; align-items: stretch; gap: 8px; }
+.hl-row { display: flex; align-items: center; gap: 7px; }
+#tool-options:has(.tool-opt-hl:not([hidden])) { border-radius: 18px; padding: 8px 12px; }
+
+.hl-width {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    min-width: 120px;
+    height: 24px;
+    margin: 0;
+    background: transparent;
+    touch-action: none;
+}
+.hl-width::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--border-strong); }
+.hl-width::-moz-range-track { height: 3px; border-radius: 2px; background: var(--border-strong); }
+.hl-width::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    margin-top: -8.5px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--surface-2);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+.hl-width::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--surface-2);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Botón-enlace de los diálogos (p. ej. "Abrir validación" del QR en celulares) */
+.dialog-buttons a.dialog-link-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 88px;
+    padding: 7px 14px;
+    font-weight: 500;
+    text-decoration: none;
+    color: var(--accent-ink);
+    background-color: var(--accent);
+    background-image: linear-gradient(180deg, var(--accent-2), var(--accent));
+    border-radius: var(--r-md);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.25) inset, 0 6px 16px -6px var(--glow);
+    -webkit-tap-highlight-color: transparent;
+}
+
 #page-nav {
     bottom: 24px;
     left: 50%;
