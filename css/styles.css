@@ -2764,3 +2764,5 @@ body.remote-phone-mode { overflow: hidden; }
 .remote-phone-shoot .ph-icon { width: 24px; height: 24px; }
 .remote-phone-count { margin: 0; min-height: 1.4em; font-size: 14px; color: var(--muted); }
 .remote-phone-exit { padding: 8px 18px; }
+.remote-phone-retry { width: 100%; padding: 12px; font-size: 16px; }
+.remote-phone-retry[hidden] { display: none; }
